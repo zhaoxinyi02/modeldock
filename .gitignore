@@ -6,3 +6,5 @@ dist/
 _*.py
 *.egg-info/
 .env
+assets/cli-proxy-api.exe
+src/secrets_runtime.py

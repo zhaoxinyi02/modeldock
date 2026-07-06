@@ -1,7 +1,86 @@
 import os, json, copy, yaml
 from constants import *
+try:
+    from secrets_runtime import BUILTIN_GLM_API_KEY
+except Exception:
+    BUILTIN_GLM_API_KEY = ""
+
+BUILTIN_ALIASES = {BUILTIN_ALIAS, BUILTIN_MODEL_ID}
+
+DEFAULT_MODEL_TEMPLATE = {
+    "slug": "template",
+    "display_name": "Template",
+    "description": "Custom",
+    "default_reasoning_level": "medium",
+    "supported_reasoning_levels": [
+        {"effort": "low", "description": "Fast responses with lighter reasoning"},
+        {"effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks"},
+        {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+    ],
+    "shell_type": "shell_command",
+    "visibility": "list",
+    "supported_in_api": True,
+    "priority": 1000,
+    "additional_speed_tiers": [],
+    "service_tiers": [],
+    "availability_nux": None,
+    "upgrade": None,
+}
+
+
+def _builtin_key():
+    return (os.environ.get(BUILTIN_KEY_ENV) or BUILTIN_GLM_API_KEY or "").strip()
+
+
+def ensure_base_files():
+    os.makedirs(INSTALL_DIR, exist_ok=True)
+    os.makedirs(AUTH_DIR, exist_ok=True)
+    os.makedirs(CODEX_HOME, exist_ok=True)
+    if not os.path.exists(CONFIG_PATH):
+        cfg = {
+            "host": GATEWAY_DEFAULT_HOST,
+            "port": GATEWAY_DEFAULT_PORT,
+            "tls": {"enable": False, "cert": "", "key": ""},
+            "remote-management": {
+                "allow-remote": False,
+                "secret-key": "",
+                "disable-control-panel": True,
+            },
+            "auth-dir": AUTH_DIR.replace("\\", "/"),
+            "api-keys": [GATEWAY_KEY],
+            "debug": False,
+            "logging-to-file": True,
+            "usage-statistics-enabled": True,
+        }
+        save_config(cfg)
+    else:
+        cfg = load_config()
+        changed = False
+        if not cfg.get("api-keys"):
+            cfg["api-keys"] = [GATEWAY_KEY]
+            changed = True
+        if not cfg.get("auth-dir"):
+            cfg["auth-dir"] = AUTH_DIR.replace("\\", "/")
+            changed = True
+        if not cfg.get("host"):
+            cfg["host"] = GATEWAY_DEFAULT_HOST
+            changed = True
+        if not cfg.get("port"):
+            cfg["port"] = GATEWAY_DEFAULT_PORT
+            changed = True
+        if changed:
+            save_config(cfg)
+    if not os.path.exists(CATALOG_PATH):
+        save_catalog({"models": []})
+
+
+def _models_list(cat):
+    if isinstance(cat, dict):
+        return cat.setdefault("models", [])
+    return cat
 
 def load_config():
+    ensure_base_files_minimal()
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
@@ -11,8 +90,25 @@ def save_config(cfg):
                       default_flow_style=False)
 
 def load_catalog():
+    ensure_base_files_minimal()
     with open(CATALOG_PATH, encoding="utf-8") as f:
         return json.load(f)
+
+
+def ensure_base_files_minimal():
+    os.makedirs(INSTALL_DIR, exist_ok=True)
+    os.makedirs(CODEX_HOME, exist_ok=True)
+    if not os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "w", encoding="utf-8", newline="\n") as f:
+            yaml.safe_dump({
+                "host": GATEWAY_DEFAULT_HOST,
+                "port": GATEWAY_DEFAULT_PORT,
+                "auth-dir": AUTH_DIR.replace("\\", "/"),
+                "api-keys": [GATEWAY_KEY],
+            }, f, allow_unicode=True, sort_keys=False)
+    if not os.path.exists(CATALOG_PATH):
+        with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as f:
+            json.dump({"models": []}, f, ensure_ascii=False, separators=(",", ":"))
 
 def save_catalog(cat):
     with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as f:
@@ -40,6 +136,7 @@ def collect_entries(cfg):
                     "upstream": str(model.get("name") or ""),
                     "base_url": str(entry.get("base-url") or ""),
                     "has_key": has_key,
+                    "built_in": alias in BUILTIN_ALIASES or entry.get("name") == BUILTIN_PROVIDER_ID,
                 })
     return result
 
@@ -51,6 +148,8 @@ def get_catalog_model(catalog, alias):
     return {}
 
 def get_summary():
+    ensure_base_files()
+    ensure_builtin_model()
     cfg = load_config()
     cat = load_catalog()
     entries = collect_entries(cfg)
@@ -79,6 +178,11 @@ def get_max_output(cfg, alias):
     return None
 
 def set_max_output(cfg, alias, value):
+    params = {"max_output_tokens": int(value)} if value else None
+    set_payload_params(cfg, alias, params)
+
+
+def set_payload_params(cfg, alias, params):
     payload = cfg.setdefault("payload", {})
     defaults = payload.setdefault("default", [])
     defaults[:] = [
@@ -88,10 +192,10 @@ def set_max_output(cfg, alias, value):
             for model in rule.get("models", [])
         )
     ]
-    if value:
+    if params:
         defaults.append({
             "models": [{"name": alias, "from-protocol": "responses"}],
-            "params": {"max_output_tokens": int(value)},
+            "params": params,
         })
     if not defaults:
         payload.pop("default", None)
@@ -121,7 +225,7 @@ def add_model(api_type, provider_name, base_url, api_key,
               max_output_tokens=None, replace=False):
     cfg = load_config()
     cat = load_catalog()
-    models = cat["models"] if isinstance(cat, dict) else cat
+    models = _models_list(cat)
 
     section_map = {"responses": "codex-api-key", "openai": "openai-compatibility",
                    "claude": "claude-api-key"}
@@ -157,7 +261,7 @@ def add_model(api_type, provider_name, base_url, api_key,
     cfg.setdefault(section, []).append(entry)
 
     by_slug = {m.get("slug"): m for m in models if isinstance(m, dict)}
-    template = by_slug.get("gpt-5.5") or models[0]
+    template = by_slug.get("gpt-5.5") or (models[0] if models else DEFAULT_MODEL_TEMPLATE)
     new_model = copy.deepcopy(template)
     new_model["slug"] = alias
     new_model["display_name"] = display_name
@@ -191,7 +295,7 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
                  context_window=None, max_output_tokens=None):
     cfg = load_config()
     cat = load_catalog()
-    models = cat["models"] if isinstance(cat, dict) else cat
+    models = _models_list(cat)
     entries = collect_entries(cfg)
 
     for idx, item in enumerate(entries):
@@ -200,6 +304,8 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
     target = next((x for x in entries if x["number"] == number), None)
     if not target:
         raise ValueError("未找到指定编号。")
+    if target.get("built_in"):
+        raise ValueError("内置免费模型受保护，不能修改。")
 
     entry = cfg[target["section"]][target["entry_index"]]
     model = entry["models"][target["model_index"]]
@@ -226,7 +332,7 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
     by_slug = {m.get("slug"): m for m in models if isinstance(m, dict)}
     cat_model = by_slug.get(old_alias)
     if not cat_model:
-        template = by_slug.get("gpt-5.5") or models[0]
+        template = by_slug.get("gpt-5.5") or (models[0] if models else DEFAULT_MODEL_TEMPLATE)
         cat_model = copy.deepcopy(template)
         models.insert(0, cat_model)
     if new_alias != old_alias:
@@ -263,7 +369,7 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
 def remove_model(number):
     cfg = load_config()
     cat = load_catalog()
-    models = cat["models"] if isinstance(cat, dict) else cat
+    models = _models_list(cat)
     entries = collect_entries(cfg)
 
     for idx, item in enumerate(entries):
@@ -272,6 +378,8 @@ def remove_model(number):
     target = next((x for x in entries if x["number"] == number), None)
     if not target:
         raise ValueError("未找到指定编号。")
+    if target.get("built_in"):
+        raise ValueError("内置免费模型受保护，不能删除。")
 
     alias = target["alias"]
     entry = cfg[target["section"]][target["entry_index"]]
@@ -299,3 +407,74 @@ def get_redacted_config():
                     ke["api-key"] = "***REDACTED***"
     return yaml.safe_dump(redacted, allow_unicode=True, sort_keys=False,
                          default_flow_style=False)
+
+
+def ensure_builtin_model():
+    ensure_base_files_minimal()
+    key = _builtin_key()
+    if not key:
+        return False
+    cfg = load_config()
+    cat = load_catalog()
+    models = _models_list(cat)
+    changed = False
+
+    section = cfg.setdefault("openai-compatibility", [])
+    entry = next((x for x in section if isinstance(x, dict) and x.get("name") == BUILTIN_PROVIDER_ID), None)
+    if not entry:
+        entry = {
+            "name": BUILTIN_PROVIDER_ID,
+            "base-url": BUILTIN_BASE_URL,
+            "api-key-entries": [{"api-key": key}],
+            "models": [{"name": BUILTIN_MODEL_ID, "alias": BUILTIN_ALIAS}],
+        }
+        section.insert(0, entry)
+        changed = True
+    else:
+        if entry.get("base-url") != BUILTIN_BASE_URL:
+            entry["base-url"] = BUILTIN_BASE_URL
+            changed = True
+        entries = entry.setdefault("api-key-entries", [{}])
+        if not entries:
+            entries.append({})
+        if entries[0].get("api-key") != key:
+            entries[0]["api-key"] = key
+            changed = True
+        model = next((m for m in entry.setdefault("models", []) if m.get("alias") == BUILTIN_ALIAS), None)
+        if not model:
+            entry["models"].insert(0, {"name": BUILTIN_MODEL_ID, "alias": BUILTIN_ALIAS})
+            changed = True
+        elif model.get("name") != BUILTIN_MODEL_ID:
+            model["name"] = BUILTIN_MODEL_ID
+            changed = True
+
+    by_slug = {m.get("slug"): m for m in models if isinstance(m, dict)}
+    template = by_slug.get("gpt-5.5") or (models[0] if models else DEFAULT_MODEL_TEMPLATE)
+    cat_model = by_slug.get(BUILTIN_ALIAS)
+    if not cat_model:
+        cat_model = copy.deepcopy(template)
+        models.insert(0, cat_model)
+        changed = True
+    cat_model.update({
+        "slug": BUILTIN_ALIAS,
+        "display_name": BUILTIN_DISPLAY_NAME,
+        "description": BUILTIN_PROVIDER_NAME,
+        "visibility": "list",
+        "supported_in_api": True,
+        "context_window": BUILTIN_CONTEXT_WINDOW,
+        "max_context_window": BUILTIN_CONTEXT_WINDOW,
+        "effective_context_window_percent": 95,
+        "priority": min([int(m.get("priority", 1000)) for m in models if isinstance(m, dict)] + [1000]) - 1,
+        "additional_speed_tiers": [],
+        "service_tiers": [],
+        "availability_nux": None,
+        "upgrade": None,
+        "x_gateway_builtin": True,
+    })
+    set_payload_params(cfg, BUILTIN_ALIAS, {
+        "max_output_tokens": BUILTIN_MAX_OUTPUT_TOKENS,
+        "thinking": {"type": "disabled"},
+    })
+    save_config(cfg)
+    save_catalog(cat)
+    return changed

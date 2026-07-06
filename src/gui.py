@@ -1,19 +1,25 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-import threading, webbrowser, os, json
+import threading, webbrowser, os, json, urllib.request
 
 from constants import *
 import gateway
 import config_manager
 import codex_repair
+import codex_control
+import runtime
 from version import check_update
 
 class App:
     def __init__(self, root):
         self.root = root
+        runtime.ensure_all()
         root.title(APP_NAME + " " + APP_VERSION)
-        root.geometry("780x580")
-        root.minsize(680, 480)
+        root.geometry("920x680")
+        root.minsize(820, 560)
+
+        style = ttk.Style()
+        style.configure("Protected.Treeview", foreground="#666666")
 
         nb = ttk.Notebook(root)
         nb.pack(fill='both', expand=True, padx=8, pady=8)
@@ -40,10 +46,21 @@ class App:
         self.st_pid = tk.StringVar(value="-")
         self.st_url = tk.StringVar(value="-")
         self.st_models = tk.StringVar(value="-")
+        self.codex_status = tk.StringVar(value="Codex: 检测中...")
 
-        ttk.Label(top, textvariable=self.st_run, font=("", 14)).pack(anchor='w')
+        ttk.Label(top, text="本地模型网关", font=("", 13, "bold")).pack(anchor='w')
+        ttk.Label(top, textvariable=self.st_run, font=("", 12)).pack(anchor='w')
         ttk.Label(top, textvariable=self.st_pid).pack(anchor='w')
         ttk.Label(top, textvariable=self.st_url).pack(anchor='w')
+
+        codex_box = ttk.LabelFrame(f, text="Codex Desktop")
+        codex_box.pack(fill='x', padx=12, pady=6)
+        ttk.Label(codex_box, textvariable=self.codex_status).pack(side='left', padx=12, pady=8)
+        self.codex_toggle_btn = ttk.Button(codex_box, text="打开 Codex", command=lambda: self._bg(self._toggle_codex))
+        self.codex_toggle_btn.pack(side='left', padx=6, pady=8)
+        self.codex_restart_btn = ttk.Button(codex_box, text="重启 Codex", command=lambda: self._bg(self._restart_codex))
+        self.codex_restart_btn.pack(side='left', padx=6, pady=8)
+
         ttk.Label(top, text="模型列表：").pack(anchor='w', pady=(8, 0))
         self.st_model_list = tk.Text(f, height=12, width=80, state='disabled',
                                     font=("Consolas", 10))
@@ -70,6 +87,15 @@ class App:
                 self.root._status_color = "red"
             self.st_pid.set("PID: " + str(s["pid"] or "-"))
             self.st_url.set("地址: " + s["url"])
+            cs = codex_control.get_status()
+            if cs["running"]:
+                self.codex_status.set("Codex: 运行中 (" + str(cs["count"]) + " 个进程)")
+                self.codex_toggle_btn.config(text="停止 Codex")
+                self.codex_restart_btn.config(state='normal')
+            else:
+                self.codex_status.set("Codex: 未运行")
+                self.codex_toggle_btn.config(text="打开 Codex")
+                self.codex_restart_btn.config(state='disabled')
             self.st_model_list.config(state='normal')
             self.st_model_list.delete('1.0', 'end')
             if s["models"]:
@@ -102,22 +128,43 @@ class App:
             messagebox.showerror("失败", "网关重启失败。")
         self.refresh_status()
 
+    def _toggle_codex(self):
+        if codex_control.is_running():
+            ok = codex_control.stop()
+            messagebox.showinfo("Codex", "Codex 已停止。" if ok else "已尝试停止 Codex。")
+        else:
+            ok = codex_control.start()
+            if ok:
+                messagebox.showinfo("Codex", "Codex 已打开。")
+            else:
+                messagebox.showerror("Codex", "未能找到或打开 Codex Desktop。")
+        self.refresh_status()
+
+    def _restart_codex(self):
+        ok = codex_control.restart()
+        if ok:
+            messagebox.showinfo("Codex", "Codex 已重启。")
+        else:
+            messagebox.showerror("Codex", "Codex 重启失败。")
+        self.refresh_status()
+
     # ── Config Tab ──
     def _build_config(self):
         f = self.config_tab
         tree_frame = ttk.Frame(f)
         tree_frame.pack(fill='both', expand=True, padx=12, pady=(12, 6))
 
-        cols = ("num", "name", "alias", "provider", "type", "url", "ctx", "maxout")
+        cols = ("num", "name", "alias", "upstream", "provider", "type", "url", "ctx", "maxout", "flag")
         self.tree = ttk.Treeview(tree_frame, columns=cols, show='headings', height=10)
-        headers = {"num":"#","name":"展示名称","alias":"模型ID","provider":"供应商",
-                   "type":"类型","url":"URL","ctx":"上下文","maxout":"最大输出"}
+        headers = {"num":"#","name":"展示名称","alias":"模型ID","upstream":"上游模型","provider":"供应商",
+                   "type":"类型","url":"URL","ctx":"上下文","maxout":"最大输出","flag":"标记"}
         for c in cols:
             self.tree.heading(c, text=headers[c])
-        widths = {"num":36,"name":140,"alias":120,"provider":110,"type":110,
-                  "url":200,"ctx":80,"maxout":80}
+        widths = {"num":36,"name":150,"alias":135,"upstream":135,"provider":120,"type":120,
+                  "url":210,"ctx":80,"maxout":80,"flag":70}
         for c in cols:
             self.tree.column(c, width=widths[c], stretch=True if c in ("name","url") else False)
+        self.tree.tag_configure("builtin", foreground="#6b7280")
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side='left', fill='both', expand=True)
@@ -136,12 +183,14 @@ class App:
         try:
             s = config_manager.get_summary()
             for e in s["entries"]:
+                tag = ("builtin",) if e.get("built_in") else ()
                 self.tree.insert('', 'end', values=(
-                    e["number"], e["display_name"], e["alias"], e["provider_name"],
+                    e["number"], e["display_name"], e["alias"], e["upstream"], e["provider_name"],
                     e["section"], e["base_url"],
                     str(e["context_window"] or "-"),
-                    str(e["max_output_tokens"] or "-")
-                ))
+                    str(e["max_output_tokens"] or "-"),
+                    "内置" if e.get("built_in") else ""
+                ), tags=tag)
         except Exception as ex:
             messagebox.showerror("错误", str(ex))
 
@@ -167,6 +216,9 @@ class App:
             messagebox.showwarning("提示", "请先选择一个模型。")
             return
         vals = self.tree.item(sel[0], 'values')
+        if len(vals) > 9 and vals[9] == "内置":
+            messagebox.showwarning("受保护", "内置免费模型不可修改。")
+            return
         num = int(vals[0])
         dlg = ModifyDialog(self.root, vals)
         if dlg.result:
@@ -185,6 +237,9 @@ class App:
             messagebox.showwarning("提示", "请先选择一个模型。")
             return
         vals = self.tree.item(sel[0], 'values')
+        if len(vals) > 9 and vals[9] == "内置":
+            messagebox.showwarning("受保护", "内置免费模型不可删除。")
+            return
         num = int(vals[0])
         name = vals[1]
         if messagebox.askyesno("确认", "确认删除 " + name + " ?"):
@@ -235,11 +290,15 @@ class App:
         ttk.Button(port_frame, text="应用并重启", command=self._apply_port).pack(side='left', padx=8, pady=6)
 
         # Codex repair section
-        repair_frame = ttk.LabelFrame(f, text="Codex 配置修复")
+        repair_frame = ttk.LabelFrame(f, text="Codex 登录与配置修复")
         repair_frame.pack(fill='x', padx=12, pady=6)
         self.repair_var = tk.StringVar(value="检测中...")
         ttk.Label(repair_frame, textvariable=self.repair_var).pack(anchor='w', padx=12, pady=6)
-        ttk.Button(repair_frame, text="检测并修复", command=self._repair_codex).pack(anchor='w', padx=12, pady=(0, 6))
+        repair_btns = ttk.Frame(repair_frame)
+        repair_btns.pack(fill='x', padx=12, pady=(0, 6))
+        ttk.Button(repair_btns, text="官方登录", command=lambda: self._bg(self._codex_login)).pack(side='left', padx=(0, 6))
+        ttk.Button(repair_btns, text="修复为订阅+第三方", command=lambda: self._repair_codex(True)).pack(side='left', padx=6)
+        ttk.Button(repair_btns, text="仅 API/跳过登录", command=lambda: self._repair_codex(False)).pack(side='left', padx=6)
 
         # Version section
         ver_frame = ttk.LabelFrame(f, text="关于")
@@ -302,13 +361,20 @@ class App:
             messagebox.showinfo("成功", "端口已修改为 " + str(port) + "，网关已重启。")
             self.refresh_status()
 
-    def _repair_codex(self):
-        ok, msg = codex_repair.repair_codex_config()
+    def _repair_codex(self, requires_auth=True):
+        ok, msg = codex_repair.repair_codex_config(requires_auth)
         if ok:
             messagebox.showinfo("修复", msg)
         else:
             messagebox.showerror("失败", msg)
         self._refresh_settings()
+
+    def _codex_login(self):
+        ok = gateway.run_codex_login()
+        if ok:
+            messagebox.showinfo("Codex 登录", "已启动 CLIProxyAPI 的 Codex 官方登录流程，请按浏览器提示完成授权。")
+        else:
+            messagebox.showerror("Codex 登录", "无法启动登录流程。")
 
     def _check_update(self):
         r = check_update()
@@ -345,7 +411,7 @@ class AddModelDialog:
         self.result = None
         self.win = tk.Toplevel(parent)
         self.win.title("添加第三方模型")
-        self.win.geometry("480x560")
+        self.win.geometry("620x520")
         self.win.transient(parent)
         self.win.grab_set()
         self._build()
@@ -371,19 +437,57 @@ class AddModelDialog:
         fields = [
             ("API Base URL:", self.base_url),
             ("API Key:", self.api_key),
-            ("上游模型ID:", self.model_id),
-            ("Codex alias:", self.alias),
-            ("展示名称:", self.display_name),
-            ("供应商名称:", self.provider_name),
-            ("上下文token(可选):", self.ctx),
-            ("最大输出token(可选):", self.maxout),
         ]
         for i, (label, var) in enumerate(fields, 1):
             ttk.Label(f, text=label).grid(row=i, column=0, sticky='w', padx=12, pady=4)
             show = '*' if 'Key' in label else ''
             ttk.Entry(f, textvariable=var, width=30, show=show).grid(row=i, column=1, padx=12, pady=4)
 
-        ttk.Button(f, text="确定", command=self._ok).grid(row=len(fields)+1, column=0, columnspan=2, pady=16)
+        ttk.Label(f, text="上游模型ID:").grid(row=3, column=0, sticky='w', padx=12, pady=4)
+        self.model_combo = ttk.Combobox(f, textvariable=self.model_id, width=28)
+        self.model_combo.grid(row=3, column=1, padx=12, pady=4)
+        ttk.Button(f, text="获取模型列表", command=lambda: threading.Thread(target=self._fetch_models, daemon=True).start()).grid(row=3, column=2, padx=(0, 12), pady=4)
+
+        more_fields = [
+            ("Codex alias:", self.alias),
+            ("展示名称:", self.display_name),
+            ("供应商名称:", self.provider_name),
+            ("上下文token(可选):", self.ctx),
+            ("最大输出token(可选):", self.maxout),
+        ]
+        for i, (label, var) in enumerate(more_fields, 4):
+            ttk.Label(f, text=label).grid(row=i, column=0, sticky='w', padx=12, pady=4)
+            ttk.Entry(f, textvariable=var, width=30).grid(row=i, column=1, padx=12, pady=4)
+
+        ttk.Button(f, text="确定", command=self._ok).grid(row=9, column=0, columnspan=3, pady=16)
+
+    def _fetch_models(self):
+        base = self.base_url.get().strip().rstrip("/")
+        key = self.api_key.get().strip()
+        if not base or not key:
+            self.win.after(0, lambda: messagebox.showwarning("提示", "请先填写 URL 和 API Key。"))
+            return
+        try:
+            req = urllib.request.Request(
+                base + "/models",
+                headers={"Authorization": "Bearer " + key, "User-Agent": APP_NAME},
+            )
+            resp = urllib.request.urlopen(req, timeout=20)
+            data = json.loads(resp.read().decode("utf-8"))
+            ids = sorted([
+                str(x.get("id") or x.get("name"))
+                for x in data.get("data", [])
+                if isinstance(x, dict) and (x.get("id") or x.get("name"))
+            ])
+            if not ids:
+                raise ValueError("接口没有返回可识别的模型 ID。")
+            def apply():
+                self.model_combo["values"] = ids
+                self.model_id.set(ids[0])
+                messagebox.showinfo("模型列表", "已获取 " + str(len(ids)) + " 个模型。")
+            self.win.after(0, apply)
+        except Exception as ex:
+            self.win.after(0, lambda: messagebox.showwarning("模型列表", "获取失败，可手动填写模型 ID。\n\n" + str(ex)))
 
     def _ok(self):
         if not self.base_url.get() or not self.api_key.get() or not self.model_id.get():
@@ -421,16 +525,16 @@ class ModifyDialog:
 
     def _build(self):
         f = self.win
-        # vals: num, name, alias, provider, type, url, ctx, maxout
+        # vals: num, name, alias, upstream, provider, type, url, ctx, maxout, flag
         fields = [
-            ("URL:", "base_url", self.vals[5]),
+            ("URL:", "base_url", self.vals[6]),
             ("API Key (留空保留):", "api_key", ""),
-            ("上游模型名:", "upstream", self.vals[5]),
+            ("上游模型名:", "upstream", self.vals[3]),
             ("Codex alias:", "alias", self.vals[2]),
             ("展示名称:", "display_name", self.vals[1]),
-            ("供应商名称:", "provider_name", self.vals[3]),
-            ("上下文token:", "context_window", self.vals[6] if self.vals[6] != "-" else ""),
-            ("最大输出token:", "max_output_tokens", self.vals[7] if self.vals[7] != "-" else ""),
+            ("供应商名称:", "provider_name", self.vals[4]),
+            ("上下文token:", "context_window", self.vals[7] if self.vals[7] != "-" else ""),
+            ("最大输出token:", "max_output_tokens", self.vals[8] if self.vals[8] != "-" else ""),
         ]
         self.vars = {}
         for i, (label, key, default) in enumerate(fields):

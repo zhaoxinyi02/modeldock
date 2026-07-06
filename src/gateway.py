@@ -1,5 +1,6 @@
 import os, subprocess, time, json, urllib.request, urllib.error
 from constants import *
+import runtime
 
 def is_running():
     try:
@@ -57,6 +58,7 @@ def is_responding():
         return False
 
 def get_status():
+    runtime.ensure_all()
     running = is_running()
     responding = is_responding() if running else False
     pid = get_pid() if running else None
@@ -83,15 +85,20 @@ def get_status():
     }
 
 def _write_vbs():
+    os.makedirs(INSTALL_DIR, exist_ok=True)
     content = (
-        f'\' CLIProxyAPI hidden launcher\n'
-        f'Set sh = CreateObject("WScript.Shell")\n'
-        f'sh.Run ""{EXE_PATH}"" -config ""{CONFIG_PATH}"""", 0, False\n'
+        "' CLIProxyAPI hidden launcher\n"
+        'Set sh = CreateObject("WScript.Shell")\n'
+        'sh.Run """" & "' + EXE_PATH.replace("\\", "\\\\") + '" & """ -config ""' +
+        CONFIG_PATH.replace("\\", "\\\\") + '""", 0, False\n'
     )
     with open(VBS_PATH, 'w', encoding='ascii') as f:
         f.write(content)
 
 def start():
+    ok, _ = runtime.ensure_all()
+    if not ok:
+        return False
     if is_running():
         return True
     if not os.path.exists(EXE_PATH):
@@ -123,32 +130,33 @@ def restart():
     return start()
 
 def get_scheduled_task_state():
-    try:
-        r = subprocess.run(
-            ["schtasks", "/query", "/tn", "CLIProxyAPI for Codex", "/fo", "list"],
-            capture_output=True, text=True, timeout=5)
-        if "Ready" in r.stdout:
-            return "ready"
-        elif "Running" in r.stdout:
-            return "running"
-        elif "Disabled" in r.stdout:
-            return "disabled"
-        return "unknown"
-    except Exception:
-        return "not_found"
+    for task_name in (AUTOSTART_TASK_NAME, OLD_AUTOSTART_TASK_NAME):
+        try:
+            r = subprocess.run(
+                ["schtasks", "/query", "/tn", task_name, "/fo", "list"],
+                capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                continue
+            if "Ready" in r.stdout:
+                return "ready"
+            elif "Running" in r.stdout:
+                return "running"
+            elif "Disabled" in r.stdout:
+                return "disabled"
+            return "unknown"
+        except Exception:
+            pass
+    return "not_found"
 
 def enable_autostart():
+    runtime.ensure_all()
     _write_vbs()
-    import ctypes
-    user = os.environ.get("USERNAME", "")
-    domain = os.environ.get("USERDOMAIN", "")
-    user_full = f"{domain}\\{user}"
     # Delete old task first
-    subprocess.run(["schtasks", "/delete", "/tn", "CLIProxyAPI for Codex", "/f"],
-                   capture_output=True)
+    for task_name in (AUTOSTART_TASK_NAME, OLD_AUTOSTART_TASK_NAME):
+        subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True)
     # Create new task with wscript + VBS (hidden window)
     cmd = (
-        f'schtasks /create /tn "CLIProxyAPI for Codex" '
+        f'schtasks /create /tn "{AUTOSTART_TASK_NAME}" '
         f'/tr "wscript.exe \"{VBS_PATH}\"" '
         f'/sc onlogon /rl limited /f'
     )
@@ -156,7 +164,23 @@ def enable_autostart():
     return r.returncode == 0
 
 def disable_autostart():
-    r = subprocess.run(
-        ["schtasks", "/delete", "/tn", "CLIProxyAPI for Codex", "/f"],
-        capture_output=True, text=True)
-    return r.returncode == 0
+    ok = False
+    for task_name in (AUTOSTART_TASK_NAME, OLD_AUTOSTART_TASK_NAME):
+        r = subprocess.run(
+            ["schtasks", "/delete", "/tn", task_name, "/f"],
+            capture_output=True, text=True)
+        ok = ok or r.returncode == 0
+    return ok
+
+
+def run_codex_login(device=False):
+    ok, _ = runtime.ensure_all()
+    if not ok:
+        return False
+    flag = "-codex-device-login" if device else "-codex-login"
+    subprocess.Popen(
+        [EXE_PATH, "-config", CONFIG_PATH, flag],
+        cwd=INSTALL_DIR,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return True

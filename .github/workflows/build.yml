@@ -23,6 +23,30 @@ jobs:
         run: |
           pip install pyyaml pyinstaller
 
+      - name: Download CLIProxyAPI runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force assets | Out-Null
+          $release = gh release view --repo router-for-me/CLIProxyAPI --json assets | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -like "CLIProxyAPI_*_windows_amd64.zip" } | Select-Object -First 1
+          if (-not $asset) { throw "CLIProxyAPI windows amd64 asset not found" }
+          gh release download --repo router-for-me/CLIProxyAPI --pattern $asset.name --dir assets --clobber
+          Expand-Archive -LiteralPath (Join-Path assets $asset.name) -DestinationPath assets/cliproxy -Force
+          $exe = Get-ChildItem assets/cliproxy -Recurse -Filter cli-proxy-api.exe | Select-Object -First 1
+          if (-not $exe) { throw "cli-proxy-api.exe not found in archive" }
+          Copy-Item -LiteralPath $exe.FullName -Destination assets/cli-proxy-api.exe -Force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inject built-in free model key
+        shell: pwsh
+        env:
+          BUILTIN_GLM_API_KEY: ${{ secrets.BUILTIN_GLM_API_KEY }}
+        run: |
+          if (-not $env:BUILTIN_GLM_API_KEY) { throw "Missing BUILTIN_GLM_API_KEY repository secret" }
+          $escaped = $env:BUILTIN_GLM_API_KEY.Replace('\', '\\').Replace('"', '\"')
+          Set-Content -LiteralPath src/secrets_runtime.py -Encoding UTF8 -Value "BUILTIN_GLM_API_KEY = `"$escaped`""
+
       - name: Build executable
         run: |
           pyinstaller build.spec --noconfirm

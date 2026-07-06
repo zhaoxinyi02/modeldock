@@ -5,7 +5,7 @@ def check_codex_config():
     issues = []
     if not os.path.exists(CODEX_CONFIG):
         issues.append("config.toml 不存在")
-        return issues, False
+        return issues, True
 
     with open(CODEX_CONFIG, encoding='utf-8') as f:
         content = f.read()
@@ -28,18 +28,25 @@ def check_codex_config():
     if "[model_providers.cliproxyapi]" not in content:
         issues.append("缺少 [model_providers.cliproxyapi] 配置段")
         needs_fix = True
+    if "experimental_bearer_token" not in content and "env_key" in content:
+        issues.append("cliproxyapi provider 使用 env_key，建议改为本地固定 token")
+        needs_fix = True
 
     return issues, needs_fix
 
-def repair_codex_config():
+def repair_codex_config(requires_openai_auth=True):
     issues, needs_fix = check_codex_config()
     if not needs_fix:
         return True, "Codex 配置已正常，无需修复。"
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = CODEX_CONFIG + ".bak-repair-" + stamp
-    with open(CODEX_CONFIG, encoding='utf-8') as f:
-        old = f.read()
+    os.makedirs(CODEX_HOME, exist_ok=True)
+    if os.path.exists(CODEX_CONFIG):
+        with open(CODEX_CONFIG, encoding='utf-8') as f:
+            old = f.read()
+    else:
+        old = ""
     with open(backup, 'w', encoding='utf-8') as f:
         f.write(old)
 
@@ -54,7 +61,8 @@ def repair_codex_config():
         'name = "CLIProxyAPI Local Gateway"\n'
         'base_url = "' + gateway_url + '"\n'
         'wire_api = "responses"\n'
-        'env_key = "CLI_PROXY_API_KEY"\n'
+        'experimental_bearer_token = "' + GATEWAY_KEY + '"\n'
+        'requires_openai_auth = ' + ("true" if requires_openai_auth else "false") + '\n'
     )
 
     if "[model_providers.cliproxyapi]" not in old:

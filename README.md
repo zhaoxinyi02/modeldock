@@ -1,70 +1,67 @@
 # Codex Gateway Manager
 
-> Codex Desktop 第三方模型可视化管理工具
+Codex Gateway Manager 是一个 Windows 单文件桌面工具，用来把 Codex Desktop、ChatGPT 订阅模型和第三方 API 模型放到同一个模型下拉列表里统一使用。
 
-一个 Windows 桌面应用程序，为 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 提供图形化管理界面，让你在 Codex Desktop 中无缝使用 GPT 订阅和第三方自定义模型。
-
-![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green)
+它内置并托管 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)，用户不需要单独下载网关程序。第一次启动时，软件会自动初始化本地网关、配置目录、模型目录和内置免费模型。
 
 ## 功能
 
-- **运行状态监控** — 实时查看网关运行状态、PID、端口和已加载模型列表
-- **配置管理** — 可视化添加、修改、删除第三方模型，支持 OpenAI / Codex Responses / Claude 三类接口
-- **开机自启** — 一键开启/关闭网关开机自启动，后台运行无弹窗
-- **端口设置** — 可视化修改网关监听端口
-- **Codex 修复** — 一键检测并修复 Codex Desktop 的 provider 配置
-- **版本更新** — 通过 GitHub Release 自动检查更新
-- **单文件 exe** — 无需安装，双击即用
+- 一体化运行时：EXE 内包含 CLIProxyAPI，首次启动自动释放到 `%LOCALAPPDATA%\CLIProxyAPI`。
+- Codex 控制：首页检测 Codex Desktop 是否运行，并提供打开、停止、重启按钮。
+- 网关控制：首页查看本地网关状态、PID、地址和当前可用模型。
+- 配置管理：可视化添加、修改、删除第三方模型，支持 OpenAI / Responses / Claude 三类接口。
+- 自动拉取模型：OpenAI 兼容接口可通过 `/models` 获取模型列表后选择。
+- 内置免费模型：默认包含 `GLM-4.7-Flash 免费内置`，该配置受保护，用户不可编辑或删除。
+- 登录与跳过登录：可以启动 Codex 官方登录，也可以一键修复为仅 API 模式。
+- 开机自启：通过 Windows 计划任务隐藏后台启动，不弹 PowerShell 窗口。
+- 一键修复：自动修复 `~/.codex/config.toml`，让 Codex 使用本地网关 provider。
+- 检查更新：通过 GitHub Releases 检测最新版。
 
-## 快速开始
+## 下载
 
-### 方式一：下载预编译版本
+前往 [Releases](https://github.com/zhaoxinyi02/codex-gateway-manager/releases) 下载最新版：
 
-1. 前往 [Releases](https://github.com/zhaoxinyi02/codex-gateway-manager/releases) 下载最新版 `CodexGatewayManager_V*.exe`
-2. 双击运行
+`CodexGatewayManager_VYYYY.MM.DD.exe`
 
-### 方式二：从源码构建
+如果同一天发布多个版本，会使用 `VYYYY.MM.DDa`、`VYYYY.MM.DDb` 这样的后缀。
 
-```bash
-git clone https://github.com/zhaoxinyi02/codex-gateway-manager.git
-cd codex-gateway-manager
+## 使用
+
+1. 安装或下载 Codex Desktop。
+2. 打开 `CodexGatewayManager.exe`。
+3. 在首页启动本地网关，必要时点击“打开 Codex”。
+4. 在设置页选择一种模式：
+   - “官方登录”：使用 CLIProxyAPI 启动 Codex 官方 OAuth 登录。
+   - “修复为订阅+第三方”：保留 Codex 登录状态，同时让模型列表走本地网关。
+   - “仅 API/跳过登录”：不依赖 ChatGPT 登录，只使用 API 模型。
+5. 在配置页添加自己的第三方模型。
+
+## 数据位置
+
+- 网关程序和配置：`%LOCALAPPDATA%\CLIProxyAPI`
+- 网关配置：`%LOCALAPPDATA%\CLIProxyAPI\config.yaml`
+- Codex 配置：`%USERPROFILE%\.codex\config.toml`
+- Codex 模型目录：`%USERPROFILE%\.codex\custom-model-catalog.json`
+
+软件会尽量保留已有配置，不覆盖、删除或重排原有模型。修复 Codex 配置前会生成带时间戳的备份文件。
+
+## 构建
+
+本项目使用 Python、Tkinter 和 PyInstaller。
+
+```powershell
 pip install pyyaml pyinstaller
 pyinstaller build.spec --noconfirm
 ```
 
-生成的 exe 在 `dist/` 目录。
+正式发布由 GitHub Actions 完成。Actions 会下载 CLIProxyAPI Windows amd64 发布包，并通过仓库 Secret `BUILTIN_GLM_API_KEY` 注入内置免费模型 key。
 
-## 使用前提
+## 安全说明
 
-- 已安装 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 并完成初始配置
-- 已安装 Codex Desktop 并完成 ChatGPT 登录
-- Windows 10/11
+内置免费模型 key 会被打进发布版 EXE。它不会出现在公开源码中，但任何内置在客户端的软件密钥都可能被逆向提取。适合低成本体验入口，不适合承载无限制高价值额度。
 
-## 工作原理
+## 开源依赖
 
-Codex Desktop 的模型下拉列表在同一时间只能绑定一个 provider。本工具通过本地代理网关 (CLIProxyAPI) 统一管理多个模型来源：
-
-- ChatGPT 订阅模型（GPT-5.5、GPT-5.4 等）通过 OAuth 授权接入
-- 第三方模型（火山引擎、DeepSeek、MiMo 等）通过 API Key 接入
-- 所有模型共用同一个 provider，在对话中可自由切换
-
-网关配置存储在 `%LOCALAPPDATA%\CLIProxyAPI\config.yaml`，Codex 模型目录存储在 `~/.codex/custom-model-catalog.json`。
-
-## 版本号规则
-
-版本号采用日期格式 `VYYYY.MM.DD`，例如 `V2026.07.06`。
-
-## 技术栈
-
-- Python 3 + tkinter（GUI）
-- PyYAML（配置读写）
-- PyInstaller（打包）
-
-## 相关项目
-
-- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — 本地模型代理网关
-- [Codex](https://developers.openai.com/codex/) — OpenAI 编程助手
-
-## License
-
-MIT
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+- [PyYAML](https://pyyaml.org/)
+- [PyInstaller](https://pyinstaller.org/)

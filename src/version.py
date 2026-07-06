@@ -1,4 +1,5 @@
 import json, urllib.request
+import re
 from constants import *
 
 def check_update():
@@ -33,9 +34,19 @@ def _get_download_url(release_data):
     return ""
 
 def _compare_versions(v1, v2):
-    p1 = [int(x) for x in v1.split(".") if x.isdigit()]
-    p2 = [int(x) for x in v2.split(".") if x.isdigit()]
+    p1, s1 = _parse_version(v1)
+    p2, s2 = _parse_version(v2)
     for a, b in zip(p1, p2):
         if a != b:
             return a - b
-    return len(p1) - len(p2)
+    if len(p1) != len(p2):
+        return len(p1) - len(p2)
+    return s1 - s2
+
+
+def _parse_version(v):
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)([a-z]?)", v or "", re.I)
+    if not m:
+        return [0, 0, 0], 0
+    suffix = m.group(4).lower()
+    return [int(m.group(1)), int(m.group(2)), int(m.group(3))], (ord(suffix) - 96 if suffix else 0)
