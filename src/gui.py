@@ -61,8 +61,9 @@ QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {
 QTableWidget { background: #ffffff; border: 1px solid #e7ebf0; border-radius: 12px; gridline-color: #eef2f7; selection-background-color: #dbeafe; selection-color: #0f172a; }
 QHeaderView::section { background: #f8fafc; color: #334155; padding: 9px; border: 0; border-bottom: 1px solid #e2e8f0; font-weight: 700; }
 QListWidget { background: #0b1220; color: #cbd5e1; border: 0; padding: 14px; font-size: 14px; }
-QListWidget::item { padding: 13px 16px; border-radius: 10px; margin: 3px 0; }
+QListWidget::item { padding: 13px 16px; border-radius: 10px; margin: 3px 0; outline: none; border: 0; }
 QListWidget::item:selected { background: #2563eb; color: white; }
+QListWidget::item:focus { outline: none; border: 0; }
 """
 
 
@@ -70,6 +71,7 @@ class Card(QWidget):
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(18, 16, 18, 16)
         self.layout.setSpacing(10)
@@ -82,6 +84,7 @@ class HeroCard(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("HeroCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(22, 18, 22, 18)
         self.layout.setSpacing(8)
@@ -266,11 +269,14 @@ class MainWindow(QMainWindow):
         status = Card("Codex 登录状态")
         self.mode_label = QLabel("检测中")
         status.layout.addWidget(self.mode_label)
+        self.provider_state_label = QLabel("")
+        status.layout.addWidget(self.provider_state_label)
         mode_btns = QHBoxLayout()
         for text, fn, obj in [
-            ("官方登录", self._codex_login, ""),
-            ("切到官方登录 + 第三方", lambda: self._repair_codex(True), "Secondary"),
-            ("切到 API + 第三方", lambda: self._repair_codex(False), "Secondary"),
+            ("启动官方登录流程", self._codex_login, ""),
+            ("切到纯官方订阅", self._switch_official_only, "Secondary"),
+            ("切到官方订阅 + 第三方 API", lambda: self._repair_codex(True), "Secondary"),
+            ("切到纯 API + 第三方模型", lambda: self._repair_codex(False), "Secondary"),
         ]:
             b = QPushButton(text)
             if obj:
@@ -423,6 +429,19 @@ class MainWindow(QMainWindow):
     def refresh_settings(self):
         ai = account_info.get_account_info()
         self.mode_label.setText("当前模式: {mode}\n邮箱: {email}\n套餐: {plan}\n说明: 纯官方订阅 / 官方订阅 + 第三方 API / 纯 API + 第三方模型会在这里明确区分。".format(**ai))
+        st = codex_repair.read_effective_provider_state()
+        auth = st["requires_openai_auth"]
+        if auth is True:
+            auth_text = "true（保留官方订阅登录）"
+        elif auth is False:
+            auth_text = "false（纯 API 模式）"
+        else:
+            auth_text = "未设置"
+        self.provider_state_label.setText(
+            "实际配置: model_provider = {model_provider}；requires_openai_auth = {auth}".format(
+                model_provider=st["model_provider"], auth=auth_text
+            )
+        )
         try:
             self.port_edit.setText(str(config_manager.get_port()))
         except Exception:
@@ -522,7 +541,17 @@ class MainWindow(QMainWindow):
             self._info(msg)
         else:
             self._error(msg)
-        self.refresh_settings()
+        self.refresh_all()
+
+    def _switch_official_only(self):
+        restore_manager.create_restore_point("auto", "before-official-only", "切换纯官方订阅前自动保存")
+        ok, msg = codex_repair.switch_to_official_only()
+        if ok:
+            restore_manager.create_restore_point("auto", "official-only", "切换纯官方订阅后自动保存")
+            self._info(msg)
+        else:
+            self._error(msg)
+        self.refresh_all()
 
     def _codex_login(self):
         if gateway.run_codex_login():

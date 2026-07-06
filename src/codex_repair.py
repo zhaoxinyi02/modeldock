@@ -35,10 +35,6 @@ def check_codex_config():
     return issues, needs_fix
 
 def repair_codex_config(requires_openai_auth=True):
-    issues, needs_fix = check_codex_config()
-    if not needs_fix:
-        return True, "Codex 配置已正常，无需修复。"
-
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = CODEX_CONFIG + ".bak-repair-" + stamp
     os.makedirs(CODEX_HOME, exist_ok=True)
@@ -83,3 +79,37 @@ def repair_codex_config(requires_openai_auth=True):
         f.write(old)
 
     return True, "修复完成，备份已保存到 " + backup
+
+
+def switch_to_official_only():
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = CODEX_CONFIG + ".bak-official-" + stamp
+    os.makedirs(CODEX_HOME, exist_ok=True)
+    if os.path.exists(CODEX_CONFIG):
+        with open(CODEX_CONFIG, encoding="utf-8") as f:
+            old = f.read()
+    else:
+        old = ""
+    with open(backup, "w", encoding="utf-8") as f:
+        f.write(old)
+    # Codex Desktop falls back to its official ChatGPT provider when no top-level
+    # custom model_provider is selected. Keep the provider block as a dormant
+    # reusable config; only remove the active selection line.
+    new = re.sub(r'(?m)^\s*model_provider\s*=\s*"cliproxyapi"\s*\n?', "", old)
+    with open(CODEX_CONFIG, "w", encoding="utf-8") as f:
+        f.write(new)
+    return True, "已切换为纯官方订阅。备份已保存到 " + backup
+
+
+def read_effective_provider_state():
+    if not os.path.exists(CODEX_CONFIG):
+        return {"model_provider": "", "requires_openai_auth": None, "uses_gateway": False}
+    text = open(CODEX_CONFIG, encoding="utf-8").read()
+    m = re.search(r'(?m)^\s*model_provider\s*=\s*"([^"]*)"', text)
+    r = re.search(r'requires_openai_auth\s*=\s*(true|false)', text, re.I)
+    provider = m.group(1) if m else ""
+    return {
+        "model_provider": provider or "官方默认",
+        "requires_openai_auth": (r.group(1).lower() == "true") if r else None,
+        "uses_gateway": provider == "cliproxyapi",
+    }
