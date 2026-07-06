@@ -84,6 +84,10 @@ def load_config():
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def load_config_from(path):
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
 def save_config(cfg):
     with open(CONFIG_PATH, "w", encoding="utf-8", newline="\n") as f:
         yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False,
@@ -113,6 +117,55 @@ def ensure_base_files_minimal():
 def save_catalog(cat):
     with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as f:
         json.dump(cat, f, ensure_ascii=False, separators=(",", ":"))
+
+def _merge_list_unique(target, source, key_fn):
+    existing = {key_fn(x) for x in target if isinstance(x, dict)}
+    changed = False
+    for item in source or []:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if key not in existing:
+            target.append(copy.deepcopy(item))
+            existing.add(key)
+            changed = True
+    return changed
+
+def merge_external_config(source_config_path):
+    ensure_base_files()
+    if not source_config_path or not os.path.exists(source_config_path):
+        return False
+    if os.path.abspath(source_config_path).lower() == os.path.abspath(CONFIG_PATH).lower():
+        return False
+    target = load_config()
+    source = load_config_from(source_config_path)
+    changed = False
+    for section in ("codex-api-key", "openai-compatibility", "claude-api-key"):
+        changed = _merge_list_unique(
+            target.setdefault(section, []),
+            source.get(section) or [],
+            lambda x, s=section: json.dumps({
+                "section": s,
+                "name": x.get("name"),
+                "base-url": x.get("base-url"),
+                "models": x.get("models"),
+            }, ensure_ascii=False, sort_keys=True),
+        ) or changed
+    if not target.get("api-keys") and source.get("api-keys"):
+        target["api-keys"] = copy.deepcopy(source.get("api-keys"))
+        changed = True
+    source_defaults = (source.get("payload") or {}).get("default") or []
+    if source_defaults:
+        target_payload = target.setdefault("payload", {})
+        target_defaults = target_payload.setdefault("default", [])
+        changed = _merge_list_unique(
+            target_defaults,
+            source_defaults,
+            lambda x: json.dumps(x.get("models") or [], ensure_ascii=False, sort_keys=True),
+        ) or changed
+    if changed:
+        save_config(target)
+    return changed
 
 def collect_entries(cfg):
     result = []
@@ -153,12 +206,18 @@ def get_summary():
     cfg = load_config()
     cat = load_catalog()
     entries = collect_entries(cfg)
+    display_number = 1
     for item in entries:
         m = get_catalog_model(cat, item["alias"])
         item["display_name"] = m.get("display_name", item["alias"])
         item["provider_name"] = m.get("description", "")
         item["context_window"] = m.get("context_window")
         item["max_output_tokens"] = get_max_output(cfg, item["alias"])
+        if item.get("built_in"):
+            item["display_number"] = 0
+        else:
+            item["display_number"] = display_number
+            display_number += 1
     return {
         "entries": entries,
         "host": cfg.get("host") or "127.0.0.1",
@@ -453,8 +512,9 @@ def ensure_builtin_model():
     cat_model = by_slug.get(BUILTIN_ALIAS)
     if not cat_model:
         cat_model = copy.deepcopy(template)
-        models.insert(0, cat_model)
         changed = True
+    models[:] = [m for m in models if not (isinstance(m, dict) and m.get("slug") == BUILTIN_ALIAS)]
+    models.insert(0, cat_model)
     cat_model.update({
         "slug": BUILTIN_ALIAS,
         "display_name": BUILTIN_DISPLAY_NAME,

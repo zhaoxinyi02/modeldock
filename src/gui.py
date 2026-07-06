@@ -1,568 +1,714 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, filedialog
-import threading, webbrowser, os, json, urllib.request
+import json
+import os
+import sys
+import threading
+import urllib.request
+import webbrowser
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QCloseEvent, QIcon
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QPlainTextEdit, QStackedWidget, QSystemTrayIcon, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QListWidget,
+    QListWidgetItem, QInputDialog
+)
 
 from constants import *
-import gateway
-import config_manager
-import codex_repair
+import account_info
 import codex_control
+import codex_repair
+import config_manager
+import gateway
+import restore_manager
 import runtime
 from version import check_update
 
-class App:
-    def __init__(self, root):
-        self.root = root
-        runtime.ensure_all()
-        root.title(APP_NAME + " " + APP_VERSION)
-        root.geometry("920x680")
-        root.minsize(820, 560)
 
-        style = ttk.Style()
-        style.configure("Protected.Treeview", foreground="#666666")
+def app_icon():
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
+    path = os.path.join(base, "assets", "app_icon.ico")
+    if os.path.exists(path):
+        return QIcon(path)
+    return QIcon()
 
-        nb = ttk.Notebook(root)
-        nb.pack(fill='both', expand=True, padx=8, pady=8)
 
-        self.status_tab = ttk.Frame(nb)
-        self.config_tab = ttk.Frame(nb)
-        self.settings_tab = ttk.Frame(nb)
-        nb.add(self.status_tab, text="  运行状态  ")
-        nb.add(self.config_tab, text="  配置管理  ")
-        nb.add(self.settings_tab, text="  设置  ")
+QSS = """
+QMainWindow { background: #f6f8fb; }
+QWidget { font-family: "Microsoft YaHei UI", "Segoe UI"; font-size: 13px; color: #172033; }
+QLabel#Title { font-size: 22px; font-weight: 700; color: #0f172a; }
+QLabel#Subtitle { color: #64748b; }
+QLabel#CardTitle { font-size: 15px; font-weight: 700; color: #0f172a; }
+QFrame, QWidget#Card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; }
+QPushButton { background: #0f172a; color: #ffffff; border: 0; border-radius: 8px; padding: 8px 14px; }
+QPushButton:hover { background: #1e293b; }
+QPushButton:disabled { background: #cbd5e1; color: #64748b; }
+QPushButton#Secondary { background: #e2e8f0; color: #0f172a; }
+QPushButton#Secondary:hover { background: #cbd5e1; }
+QPushButton#Danger { background: #dc2626; }
+QPushButton#Danger:hover { background: #b91c1c; }
+QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {
+  background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px;
+}
+QTableWidget { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; gridline-color: #eef2f7; }
+QHeaderView::section { background: #f1f5f9; color: #334155; padding: 8px; border: 0; font-weight: 600; }
+QListWidget { background: #0f172a; color: #cbd5e1; border: 0; padding: 10px; }
+QListWidget::item { padding: 12px; border-radius: 8px; }
+QListWidget::item:selected { background: #2563eb; color: white; }
+"""
 
-        self._build_status()
-        self._build_config()
-        self._build_settings()
+
+class Card(QWidget):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(18, 16, 18, 16)
+        self.layout.setSpacing(10)
+        label = QLabel(title)
+        label.setObjectName("CardTitle")
+        self.layout.addWidget(label)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(APP_NAME + " " + APP_VERSION)
+        self.setWindowIcon(app_icon())
+        self.resize(1120, 720)
+        self._allow_exit = False
+        self._build_ui()
+        self._build_tray()
+        self.refresh_all()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_status)
+        self.timer.start(8000)
+
+    def _build_ui(self):
+        root = QWidget()
+        main = QHBoxLayout(root)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(0)
+        self.nav = QListWidget()
+        self.nav.setFixedWidth(220)
+        for text in ("首页", "配置管理", "回退点", "设置"):
+            QListWidgetItem(text, self.nav)
+        self.nav.setCurrentRow(0)
+        self.nav.currentRowChanged.connect(self._switch_page)
+        self.stack = QStackedWidget()
+        main.addWidget(self.nav)
+        main.addWidget(self.stack, 1)
+        self.setCentralWidget(root)
+        self.stack.addWidget(self._status_page())
+        self.stack.addWidget(self._config_page())
+        self.stack.addWidget(self._restore_page())
+        self.stack.addWidget(self._settings_page())
+
+    def _page(self, title, subtitle):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+        h = QLabel(title)
+        h.setObjectName("Title")
+        s = QLabel(subtitle)
+        s.setObjectName("Subtitle")
+        layout.addWidget(h)
+        layout.addWidget(s)
+        return page, layout
+
+    def _status_page(self):
+        page, layout = self._page("Codex Gateway", "统一托管 Codex 官方模型和第三方 API 模型")
+        grid = QGridLayout()
+        layout.addLayout(grid)
+        self.gateway_card = Card("本地网关")
+        self.gateway_status = QLabel("检测中")
+        self.gateway_detail = QLabel("")
+        self.gateway_models = QLabel("")
+        self.gateway_card.layout.addWidget(self.gateway_status)
+        self.gateway_card.layout.addWidget(self.gateway_detail)
+        self.gateway_card.layout.addWidget(self.gateway_models)
+        btns = QHBoxLayout()
+        self.gateway_start_btn = QPushButton("启动网关")
+        self.gateway_stop_btn = QPushButton("停止网关")
+        self.gateway_restart_btn = QPushButton("重启网关")
+        self.gateway_stop_btn.setObjectName("Secondary")
+        self.gateway_restart_btn.setObjectName("Secondary")
+        self.gateway_start_btn.clicked.connect(lambda: self._bg(self._start_gateway))
+        self.gateway_stop_btn.clicked.connect(lambda: self._bg(self._stop_gateway))
+        self.gateway_restart_btn.clicked.connect(lambda: self._bg(self._restart_gateway))
+        for b in (self.gateway_start_btn, self.gateway_stop_btn, self.gateway_restart_btn):
+            btns.addWidget(b)
+        self.gateway_card.layout.addLayout(btns)
+
+        self.codex_card = Card("Codex Desktop")
+        self.codex_status = QLabel("检测中")
+        self.codex_detail = QLabel("")
+        self.codex_card.layout.addWidget(self.codex_status)
+        self.codex_card.layout.addWidget(self.codex_detail)
+        codex_btns = QHBoxLayout()
+        self.codex_toggle_btn = QPushButton("打开 Codex")
+        self.codex_restart_btn = QPushButton("重启 Codex")
+        self.codex_restart_btn.setObjectName("Secondary")
+        self.codex_toggle_btn.clicked.connect(lambda: self._bg(self._toggle_codex))
+        self.codex_restart_btn.clicked.connect(lambda: self._bg(self._restart_codex))
+        codex_btns.addWidget(self.codex_toggle_btn)
+        codex_btns.addWidget(self.codex_restart_btn)
+        self.codex_card.layout.addLayout(codex_btns)
+
+        self.account_card = Card("官方账号")
+        self.account_status = QLabel("")
+        self.account_card.layout.addWidget(self.account_status)
+        grid.addWidget(self.gateway_card, 0, 0)
+        grid.addWidget(self.codex_card, 0, 1)
+        grid.addWidget(self.account_card, 1, 0, 1, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addStretch(1)
+        return page
+
+    def _config_page(self):
+        page, layout = self._page("配置管理", "内置模型固定为 0 号，用户模型从 1 开始")
+        self.config_table = QTableWidget(0, 10)
+        self.config_table.setHorizontalHeaderLabels(["序号", "展示名称", "模型ID", "上游模型", "供应商", "类型", "URL", "上下文", "最大输出", "标记"])
+        self.config_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.config_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        self.config_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.config_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.config_table, 1)
+        btns = QHBoxLayout()
+        for text, fn, obj in [
+            ("刷新", self.refresh_config, "Secondary"),
+            ("添加模型", self._add_model, ""),
+            ("修改", self._modify_model, "Secondary"),
+            ("删除", self._remove_model, "Danger"),
+            ("查看脱敏配置", self._view_config, "Secondary"),
+        ]:
+            b = QPushButton(text)
+            if obj:
+                b.setObjectName(obj)
+            b.clicked.connect(fn)
+            btns.addWidget(b)
+        btns.addStretch(1)
+        layout.addLayout(btns)
+        return page
+
+    def _restore_page(self):
+        page, layout = self._page("回退点", "自动回退和手动回退分开保存，可恢复 Codex 与网关配置")
+        self.restore_table = QTableWidget(0, 5)
+        self.restore_table.setHorizontalHeaderLabels(["类型", "名称", "时间", "备注", "项目数"])
+        self.restore_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.restore_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.restore_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.restore_table, 1)
+        btns = QHBoxLayout()
+        for text, fn, obj in [
+            ("刷新", self.refresh_restore_points, "Secondary"),
+            ("新建手动回退点", self._manual_restore_point, ""),
+            ("恢复选中回退点", self._restore_selected, "Danger"),
+        ]:
+            b = QPushButton(text)
+            if obj:
+                b.setObjectName(obj)
+            b.clicked.connect(fn)
+            btns.addWidget(b)
+        btns.addStretch(1)
+        layout.addLayout(btns)
+        return page
+
+    def _settings_page(self):
+        page, layout = self._page("设置", "登录模式、自启、端口、版本更新")
+        status = Card("Codex 登录状态")
+        self.mode_label = QLabel("检测中")
+        status.layout.addWidget(self.mode_label)
+        mode_btns = QHBoxLayout()
+        for text, fn, obj in [
+            ("官方登录", self._codex_login, ""),
+            ("切到官方登录 + 第三方", lambda: self._repair_codex(True), "Secondary"),
+            ("切到 API + 第三方", lambda: self._repair_codex(False), "Secondary"),
+        ]:
+            b = QPushButton(text)
+            if obj:
+                b.setObjectName(obj)
+            b.clicked.connect(fn)
+            mode_btns.addWidget(b)
+        status.layout.addLayout(mode_btns)
+        layout.addWidget(status)
+
+        auto = Card("开机自启与端口")
+        self.auto_label = QLabel("")
+        self.port_edit = QLineEdit()
+        self.port_edit.setFixedWidth(120)
+        pbtn = QPushButton("应用端口并重启")
+        pbtn.clicked.connect(self._apply_port)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("端口"))
+        row.addWidget(self.port_edit)
+        row.addWidget(pbtn)
+        row.addStretch(1)
+        auto.layout.addWidget(self.auto_label)
+        auto.layout.addLayout(row)
+        abtns = QHBoxLayout()
+        on = QPushButton("开启自启")
+        off = QPushButton("关闭自启")
+        off.setObjectName("Secondary")
+        on.clicked.connect(self._enable_autostart)
+        off.clicked.connect(self._disable_autostart)
+        abtns.addWidget(on)
+        abtns.addWidget(off)
+        abtns.addStretch(1)
+        auto.layout.addLayout(abtns)
+        layout.addWidget(auto)
+
+        about = Card("关于")
+        self.version_label = QLabel(APP_VERSION + "  ·  zhaoxinyi02/codex-gateway-manager")
+        about.layout.addWidget(self.version_label)
+        up = QPushButton("检查更新")
+        up.clicked.connect(lambda: self._bg(self._check_update))
+        about.layout.addWidget(up)
+        layout.addWidget(about)
+        layout.addStretch(1)
+        return page
+
+    def _build_tray(self):
+        self.tray = QSystemTrayIcon(app_icon(), self)
+        self.tray.setToolTip(APP_NAME)
+        menu = self.tray.contextMenu()
+        if menu is None:
+            from PySide6.QtWidgets import QMenu
+            menu = QMenu()
+            self.tray.setContextMenu(menu)
+        show = QAction("显示窗口", self)
+        show.triggered.connect(self.show_window)
+        start = QAction("启动/重启网关", self)
+        start.triggered.connect(lambda: self._bg(self._restart_gateway))
+        quit_action = QAction("退出", self)
+        quit_action.triggered.connect(self.exit_app)
+        menu.addAction(show)
+        menu.addAction(start)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        self.tray.activated.connect(lambda reason: self.show_window() if reason == QSystemTrayIcon.DoubleClick else None)
+        self.tray.show()
+
+    def _switch_page(self, index):
+        self.stack.setCurrentIndex(index)
+        if index == 1:
+            self.refresh_config()
+        elif index == 2:
+            self.refresh_restore_points()
+        elif index == 3:
+            self.refresh_settings()
+
+    def refresh_all(self):
         self.refresh_status()
-
-    # ── Status Tab ──
-    def _build_status(self):
-        f = self.status_tab
-        top = ttk.Frame(f)
-        top.pack(fill='x', padx=12, pady=(12, 6))
-
-        self.st_run = tk.StringVar(value="检测中...")
-        self.st_pid = tk.StringVar(value="-")
-        self.st_url = tk.StringVar(value="-")
-        self.st_models = tk.StringVar(value="-")
-        self.codex_status = tk.StringVar(value="Codex: 检测中...")
-
-        ttk.Label(top, text="本地模型网关", font=("", 13, "bold")).pack(anchor='w')
-        ttk.Label(top, textvariable=self.st_run, font=("", 12)).pack(anchor='w')
-        ttk.Label(top, textvariable=self.st_pid).pack(anchor='w')
-        ttk.Label(top, textvariable=self.st_url).pack(anchor='w')
-
-        codex_box = ttk.LabelFrame(f, text="Codex Desktop")
-        codex_box.pack(fill='x', padx=12, pady=6)
-        ttk.Label(codex_box, textvariable=self.codex_status).pack(side='left', padx=12, pady=8)
-        self.codex_toggle_btn = ttk.Button(codex_box, text="打开 Codex", command=lambda: self._bg(self._toggle_codex))
-        self.codex_toggle_btn.pack(side='left', padx=6, pady=8)
-        self.codex_restart_btn = ttk.Button(codex_box, text="重启 Codex", command=lambda: self._bg(self._restart_codex))
-        self.codex_restart_btn.pack(side='left', padx=6, pady=8)
-
-        ttk.Label(top, text="模型列表：").pack(anchor='w', pady=(8, 0))
-        self.st_model_list = tk.Text(f, height=12, width=80, state='disabled',
-                                    font=("Consolas", 10))
-        self.st_model_list.pack(fill='both', expand=True, padx=12, pady=6)
-
-        btns = ttk.Frame(f)
-        btns.pack(fill='x', padx=12, pady=(0, 12))
-        ttk.Button(btns, text="刷新", command=self.refresh_status).pack(side='left', padx=(0, 6))
-        ttk.Button(btns, text="启动", command=lambda: self._bg(self._start)).pack(side='left', padx=6)
-        ttk.Button(btns, text="停止", command=lambda: self._bg(self._stop)).pack(side='left', padx=6)
-        ttk.Button(btns, text="重启", command=lambda: self._bg(self._restart)).pack(side='left', padx=6)
+        self.refresh_config()
+        self.refresh_restore_points()
+        self.refresh_settings()
 
     def refresh_status(self):
-        def _do():
-            s = gateway.get_status()
-            if s["running"] and s["responding"]:
-                self.st_run.set("● 运行中 (正常响应)")
-                self.root._status_color = "green"
-            elif s["running"]:
-                self.st_run.set("● 运行中 (无响应)")
-                self.root._status_color = "orange"
-            else:
-                self.st_run.set("● 已停止")
-                self.root._status_color = "red"
-            self.st_pid.set("PID: " + str(s["pid"] or "-"))
-            self.st_url.set("地址: " + s["url"])
-            cs = codex_control.get_status()
-            if cs["running"]:
-                self.codex_status.set("Codex: 运行中 (" + str(cs["count"]) + " 个进程)")
-                self.codex_toggle_btn.config(text="停止 Codex")
-                self.codex_restart_btn.config(state='normal')
-            else:
-                self.codex_status.set("Codex: 未运行")
-                self.codex_toggle_btn.config(text="打开 Codex")
-                self.codex_restart_btn.config(state='disabled')
-            self.st_model_list.config(state='normal')
-            self.st_model_list.delete('1.0', 'end')
-            if s["models"]:
-                for m in s["models"]:
-                    self.st_model_list.insert('end', m + "\n")
-            else:
-                self.st_model_list.insert('end', "(无可用模型或网关未运行)\n")
-            self.st_model_list.config(state='disabled')
+        s = gateway.get_status()
+        if s["running"] and s["responding"]:
+            self.gateway_status.setText("运行中 · 正常响应")
+        elif s["running"]:
+            self.gateway_status.setText("运行中 · 暂无响应")
+        else:
+            self.gateway_status.setText("已停止")
+        self.gateway_detail.setText("PID: {}    地址: {}".format(s.get("pid") or "-", s.get("url") or "-"))
+        self.gateway_models.setText("模型数量: " + str(len(s.get("models") or [])))
+        self.gateway_start_btn.setEnabled(not s["running"])
+        self.gateway_stop_btn.setEnabled(s["running"])
+        self.gateway_restart_btn.setEnabled(True)
 
-        self._bg(_do)
+        cs = codex_control.get_status()
+        self.codex_status.setText("运行中" if cs["running"] else "未运行")
+        self.codex_detail.setText("进程数: {}".format(cs["count"]))
+        self.codex_toggle_btn.setText("停止 Codex" if cs["running"] else "打开 Codex")
+        self.codex_restart_btn.setEnabled(cs["running"])
 
-    def _start(self):
+        ai = account_info.get_account_info()
+        self.account_status.setText(
+            "模式: {mode}\n邮箱: {email}\n套餐: {plan}\n过期: {expired}\n第三方模型: {third_party_count}\n用量: {usage}".format(**ai)
+        )
+
+    def refresh_config(self):
+        try:
+            summary = config_manager.get_summary()
+            entries = sorted(summary["entries"], key=lambda x: (x.get("display_number", x["number"]), x["alias"]))
+            self.config_table.setRowCount(len(entries))
+            self._entry_by_row = {}
+            for row, e in enumerate(entries):
+                vals = [
+                    e.get("display_number", e["number"]), e["display_name"], e["alias"], e["upstream"],
+                    e["provider_name"], e["section"], e["base_url"], e.get("context_window") or "-",
+                    e.get("max_output_tokens") or "-", "内置" if e.get("built_in") else "",
+                ]
+                for col, val in enumerate(vals):
+                    item = QTableWidgetItem(str(val))
+                    if e.get("built_in"):
+                        item.setForeground(Qt.darkGray)
+                    self.config_table.setItem(row, col, item)
+                self._entry_by_row[row] = e
+        except Exception as ex:
+            self._error(str(ex))
+
+    def refresh_restore_points(self):
+        points = restore_manager.list_restore_points()
+        self.restore_table.setRowCount(len(points))
+        self._restore_by_row = {}
+        for row, p in enumerate(points):
+            vals = [("手动" if p["kind"] == "manual" else "自动"), p["name"], p["created_at"], p["notes"], p["items"]]
+            for col, val in enumerate(vals):
+                self.restore_table.setItem(row, col, QTableWidgetItem(str(val)))
+            self._restore_by_row[row] = p
+
+    def refresh_settings(self):
+        ai = account_info.get_account_info()
+        self.mode_label.setText("当前状态: {mode}\n邮箱: {email}\n套餐: {plan}".format(**ai))
+        try:
+            self.port_edit.setText(str(config_manager.get_port()))
+        except Exception:
+            self.port_edit.setText(str(GATEWAY_DEFAULT_PORT))
+        state = gateway.get_scheduled_task_state()
+        self.auto_label.setText("自启状态: " + ("已开启" if state in ("ready", "running") else "未开启"))
+
+    def selected_entry(self):
+        row = self.config_table.currentRow()
+        return getattr(self, "_entry_by_row", {}).get(row)
+
+    def _after_config_change(self, name):
+        try:
+            config_manager.ensure_builtin_model()
+            gateway.restart()
+            if gateway.is_responding():
+                restore_manager.create_restore_point("auto", name, "配置修改后自动保存")
+        finally:
+            self.refresh_all()
+
+    def _add_model(self):
+        dlg = ModelDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            r = dlg.result
+            try:
+                config_manager.add_model(**r)
+                self._after_config_change("add-model")
+                self._info("模型已添加。")
+            except Exception as ex:
+                self._error(str(ex))
+
+    def _modify_model(self):
+        e = self.selected_entry()
+        if not e:
+            self._warn("请先选择一个模型。")
+            return
+        if e.get("built_in"):
+            self._warn("内置免费模型不可修改。")
+            return
+        dlg = ModelDialog(self, e)
+        if dlg.exec() == QDialog.Accepted:
+            try:
+                config_manager.modify_model(e["number"], **dlg.result)
+                self._after_config_change("modify-model")
+                self._info("模型已修改。")
+            except Exception as ex:
+                self._error(str(ex))
+
+    def _remove_model(self):
+        e = self.selected_entry()
+        if not e:
+            self._warn("请先选择一个模型。")
+            return
+        if e.get("built_in"):
+            self._warn("内置免费模型不可删除。")
+            return
+        if QMessageBox.question(self, "确认删除", "确认删除 {} ?".format(e["display_name"])) == QMessageBox.Yes:
+            try:
+                config_manager.remove_model(e["number"])
+                self._after_config_change("remove-model")
+                self._info("模型已删除。")
+            except Exception as ex:
+                self._error(str(ex))
+
+    def _view_config(self):
+        dlg = TextDialog("脱敏后的 config.yaml", config_manager.get_redacted_config(), self)
+        dlg.exec()
+
+    def _manual_restore_point(self):
+        name, ok = QInputDialog.getText(self, "手动回退点", "名称")
+        if not ok:
+            return
+        notes, _ = QInputDialog.getMultiLineText(self, "备注", "备注")
+        restore_manager.create_restore_point("manual", name, notes)
+        self.refresh_restore_points()
+
+    def _restore_selected(self):
+        row = self.restore_table.currentRow()
+        p = getattr(self, "_restore_by_row", {}).get(row)
+        if not p:
+            self._warn("请先选择一个回退点。")
+            return
+        if QMessageBox.question(self, "确认回退", "回退会覆盖当前 Codex/网关配置，继续?") == QMessageBox.Yes:
+            try:
+                restore_manager.restore(p["id"])
+                gateway.restart()
+                self.refresh_all()
+                self._info("已恢复回退点。")
+            except Exception as ex:
+                self._error(str(ex))
+
+    def _repair_codex(self, requires_auth):
+        restore_manager.create_restore_point("auto", "before-codex-mode-switch", "切换登录模式前自动保存")
+        ok, msg = codex_repair.repair_codex_config(requires_auth)
+        if ok:
+            restore_manager.create_restore_point("auto", "codex-mode-switch", "切换登录模式后自动保存")
+            self._info(msg)
+        else:
+            self._error(msg)
+        self.refresh_settings()
+
+    def _codex_login(self):
+        if gateway.run_codex_login():
+            self._info("已启动 Codex 官方登录流程，请按浏览器提示完成授权。")
+        else:
+            self._error("无法启动登录流程。")
+
+    def _start_gateway(self):
         ok = gateway.start()
-        if ok:
-            messagebox.showinfo("成功", "网关已启动。")
-        else:
-            messagebox.showerror("失败", "网关启动失败，请检查配置和程序。")
-        self.refresh_status()
+        self.tray.showMessage(APP_NAME, "网关已启动" if ok else "网关启动失败")
+        self.refresh_all()
 
-    def _stop(self):
+    def _stop_gateway(self):
         gateway.stop()
-        messagebox.showinfo("已停止", "网关已停止。")
-        self.refresh_status()
+        self.refresh_all()
 
-    def _restart(self):
+    def _restart_gateway(self):
         ok = gateway.restart()
-        if ok:
-            messagebox.showinfo("成功", "网关已重启。")
-        else:
-            messagebox.showerror("失败", "网关重启失败。")
-        self.refresh_status()
+        self.tray.showMessage(APP_NAME, "网关已重启" if ok else "网关重启失败")
+        self.refresh_all()
 
     def _toggle_codex(self):
-        if codex_control.is_running():
-            ok = codex_control.stop()
-            messagebox.showinfo("Codex", "Codex 已停止。" if ok else "已尝试停止 Codex。")
-        else:
-            ok = codex_control.start()
-            if ok:
-                messagebox.showinfo("Codex", "Codex 已打开。")
-            else:
-                messagebox.showerror("Codex", "未能找到或打开 Codex Desktop。")
+        ok = codex_control.stop() if codex_control.is_running() else codex_control.start()
+        self.tray.showMessage(APP_NAME, "Codex 操作完成" if ok else "Codex 操作失败")
         self.refresh_status()
 
     def _restart_codex(self):
-        ok = codex_control.restart()
-        if ok:
-            messagebox.showinfo("Codex", "Codex 已重启。")
-        else:
-            messagebox.showerror("Codex", "Codex 重启失败。")
+        codex_control.restart()
         self.refresh_status()
 
-    # ── Config Tab ──
-    def _build_config(self):
-        f = self.config_tab
-        tree_frame = ttk.Frame(f)
-        tree_frame.pack(fill='both', expand=True, padx=12, pady=(12, 6))
-
-        cols = ("num", "name", "alias", "upstream", "provider", "type", "url", "ctx", "maxout", "flag")
-        self.tree = ttk.Treeview(tree_frame, columns=cols, show='headings', height=10)
-        headers = {"num":"#","name":"展示名称","alias":"模型ID","upstream":"上游模型","provider":"供应商",
-                   "type":"类型","url":"URL","ctx":"上下文","maxout":"最大输出","flag":"标记"}
-        for c in cols:
-            self.tree.heading(c, text=headers[c])
-        widths = {"num":36,"name":150,"alias":135,"upstream":135,"provider":120,"type":120,
-                  "url":210,"ctx":80,"maxout":80,"flag":70}
-        for c in cols:
-            self.tree.column(c, width=widths[c], stretch=True if c in ("name","url") else False)
-        self.tree.tag_configure("builtin", foreground="#6b7280")
-        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side='left', fill='both', expand=True)
-        vsb.pack(side='right', fill='y')
-
-        btns = ttk.Frame(f)
-        btns.pack(fill='x', padx=12, pady=(0, 6))
-        ttk.Button(btns, text="刷新", command=self.refresh_config).pack(side='left', padx=(0, 6))
-        ttk.Button(btns, text="添加模型", command=self._add_model).pack(side='left', padx=6)
-        ttk.Button(btns, text="修改", command=self._modify_model).pack(side='left', padx=6)
-        ttk.Button(btns, text="删除", command=self._remove_model).pack(side='left', padx=6)
-        ttk.Button(btns, text="查看完整配置", command=self._view_config).pack(side='left', padx=6)
-
-    def refresh_config(self):
-        self.tree.delete(*self.tree.get_children())
-        try:
-            s = config_manager.get_summary()
-            for e in s["entries"]:
-                tag = ("builtin",) if e.get("built_in") else ()
-                self.tree.insert('', 'end', values=(
-                    e["number"], e["display_name"], e["alias"], e["upstream"], e["provider_name"],
-                    e["section"], e["base_url"],
-                    str(e["context_window"] or "-"),
-                    str(e["max_output_tokens"] or "-"),
-                    "内置" if e.get("built_in") else ""
-                ), tags=tag)
-        except Exception as ex:
-            messagebox.showerror("错误", str(ex))
-
-    def _add_model(self):
-        dlg = AddModelDialog(self.root)
-        if dlg.result:
-            r = dlg.result
-            try:
-                alias = config_manager.add_model(
-                    r["api_type"], r["provider_name"], r["base_url"],
-                    r["api_key"], r["model_id"], r["alias"],
-                    r["display_name"], r.get("context_window"),
-                    r.get("max_output_tokens"))
-                gateway.restart()
-                messagebox.showinfo("成功", "模型已添加: " + alias)
-                self.refresh_config()
-            except Exception as ex:
-                messagebox.showerror("失败", str(ex))
-
-    def _modify_model(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("提示", "请先选择一个模型。")
-            return
-        vals = self.tree.item(sel[0], 'values')
-        if len(vals) > 9 and vals[9] == "内置":
-            messagebox.showwarning("受保护", "内置免费模型不可修改。")
-            return
-        num = int(vals[0])
-        dlg = ModifyDialog(self.root, vals)
-        if dlg.result:
-            r = dlg.result
-            try:
-                alias = config_manager.modify_model(num, **r)
-                gateway.restart()
-                messagebox.showinfo("成功", "已修改: " + alias)
-                self.refresh_config()
-            except Exception as ex:
-                messagebox.showerror("失败", str(ex))
-
-    def _remove_model(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("提示", "请先选择一个模型。")
-            return
-        vals = self.tree.item(sel[0], 'values')
-        if len(vals) > 9 and vals[9] == "内置":
-            messagebox.showwarning("受保护", "内置免费模型不可删除。")
-            return
-        num = int(vals[0])
-        name = vals[1]
-        if messagebox.askyesno("确认", "确认删除 " + name + " ?"):
-            try:
-                alias = config_manager.remove_model(num)
-                gateway.restart()
-                messagebox.showinfo("成功", "已删除: " + alias)
-                self.refresh_config()
-            except Exception as ex:
-                messagebox.showerror("失败", str(ex))
-
-    def _view_config(self):
-        win = tk.Toplevel(self.root)
-        win.title("完整配置 (脱敏)")
-        win.geometry("700x600")
-        txt = tk.Text(win, font=("Consolas", 10), wrap='none')
-        txt.pack(fill='both', expand=True)
-        sb = ttk.Scrollbar(win, command=txt.yview)
-        sb.pack(side='right', fill='y')
-        txt.configure(yscrollcommand=sb.set)
-        try:
-            content = config_manager.get_redacted_config()
-            txt.insert('1.0', content)
-        except Exception as ex:
-            txt.insert('1.0', "Error: " + str(ex))
-        txt.config(state='disabled')
-
-    # ── Settings Tab ──
-    def _build_settings(self):
-        f = self.settings_tab
-
-        # Autostart section
-        auto_frame = ttk.LabelFrame(f, text="开机自启")
-        auto_frame.pack(fill='x', padx=12, pady=(12, 6))
-        self.auto_var = tk.StringVar(value="检测中...")
-        ttk.Label(auto_frame, textvariable=self.auto_var).pack(anchor='w', padx=12, pady=6)
-        auto_btns = ttk.Frame(auto_frame)
-        auto_btns.pack(fill='x', padx=12, pady=(0, 6))
-        ttk.Button(auto_btns, text="开启自启", command=self._enable_autostart).pack(side='left', padx=(0, 6))
-        ttk.Button(auto_btns, text="关闭自启", command=self._disable_autostart).pack(side='left', padx=6)
-
-        # Port section
-        port_frame = ttk.LabelFrame(f, text="网关端口")
-        port_frame.pack(fill='x', padx=12, pady=6)
-        self.port_var = tk.StringVar()
-        ttk.Label(port_frame, text="端口:").pack(side='left', padx=(12, 4), pady=6)
-        ttk.Entry(port_frame, textvariable=self.port_var, width=10).pack(side='left', padx=4, pady=6)
-        ttk.Button(port_frame, text="应用并重启", command=self._apply_port).pack(side='left', padx=8, pady=6)
-
-        # Codex repair section
-        repair_frame = ttk.LabelFrame(f, text="Codex 登录与配置修复")
-        repair_frame.pack(fill='x', padx=12, pady=6)
-        self.repair_var = tk.StringVar(value="检测中...")
-        ttk.Label(repair_frame, textvariable=self.repair_var).pack(anchor='w', padx=12, pady=6)
-        repair_btns = ttk.Frame(repair_frame)
-        repair_btns.pack(fill='x', padx=12, pady=(0, 6))
-        ttk.Button(repair_btns, text="官方登录", command=lambda: self._bg(self._codex_login)).pack(side='left', padx=(0, 6))
-        ttk.Button(repair_btns, text="修复为订阅+第三方", command=lambda: self._repair_codex(True)).pack(side='left', padx=6)
-        ttk.Button(repair_btns, text="仅 API/跳过登录", command=lambda: self._repair_codex(False)).pack(side='left', padx=6)
-
-        # Version section
-        ver_frame = ttk.LabelFrame(f, text="关于")
-        ver_frame.pack(fill='x', padx=12, pady=6)
-        ttk.Label(ver_frame, text="软件版本: " + APP_VERSION).pack(anchor='w', padx=12, pady=6)
-        ttk.Label(ver_frame, text="GitHub: " + GITHUB_OWNER + "/" + GITHUB_REPO).pack(anchor='w', padx=12)
-        ttk.Button(ver_frame, text="检查更新", command=lambda: self._bg(self._check_update)).pack(anchor='w', padx=12, pady=6)
-
-        self._refresh_settings()
-
-    def _refresh_settings(self):
-        def _do():
-            try:
-                port = config_manager.get_port()
-                self.port_var.set(str(port))
-            except Exception:
-                self.port_var.set("8317")
-            state = gateway.get_scheduled_task_state()
-            if state in ("ready", "running"):
-                self.auto_var.set("已开启 (登录时自动启动)")
-            elif state == "disabled":
-                self.auto_var.set("已关闭")
-            else:
-                self.auto_var.set("未配置")
-            issues, needs_fix = codex_repair.check_codex_config()
-            if not needs_fix:
-                self.repair_var.set("正常 - Codex 已配置使用本网关")
-            else:
-                self.repair_var.set("需要修复 - " + "; ".join(issues))
-        self._bg(_do)
-
-    def _enable_autostart(self):
-        ok = gateway.enable_autostart()
-        if ok:
-            messagebox.showinfo("成功", "已开启开机自启。")
-        else:
-            messagebox.showerror("失败", "开启自启失败。")
-        self._refresh_settings()
-
-    def _disable_autostart(self):
-        ok = gateway.disable_autostart()
-        if ok:
-            messagebox.showinfo("成功", "已关闭开机自启。")
-        else:
-            messagebox.showwarning("提示", "可能本就没有计划任务。")
-        self._refresh_settings()
-
     def _apply_port(self):
-        port = self.port_var.get().strip()
         try:
-            port = int(port)
+            port = int(self.port_edit.text().strip())
             if port < 1 or port > 65535:
                 raise ValueError()
         except ValueError:
-            messagebox.showerror("错误", "端口必须是 1-65535 的数字。")
+            self._warn("端口必须是 1-65535。")
             return
-        if messagebox.askyesno("确认", "修改端口需要重启网关，继续?"):
-            config_manager.set_port(port)
-            gateway.restart()
-            messagebox.showinfo("成功", "端口已修改为 " + str(port) + "，网关已重启。")
-            self.refresh_status()
+        restore_manager.create_restore_point("auto", "before-port-change", "修改端口前自动保存")
+        config_manager.set_port(port)
+        self._restart_gateway()
 
-    def _repair_codex(self, requires_auth=True):
-        ok, msg = codex_repair.repair_codex_config(requires_auth)
-        if ok:
-            messagebox.showinfo("修复", msg)
-        else:
-            messagebox.showerror("失败", msg)
-        self._refresh_settings()
+    def _enable_autostart(self):
+        self._info("已开启自启。" if gateway.enable_autostart() else "开启自启失败。")
+        self.refresh_settings()
 
-    def _codex_login(self):
-        ok = gateway.run_codex_login()
-        if ok:
-            messagebox.showinfo("Codex 登录", "已启动 CLIProxyAPI 的 Codex 官方登录流程，请按浏览器提示完成授权。")
-        else:
-            messagebox.showerror("Codex 登录", "无法启动登录流程。")
+    def _disable_autostart(self):
+        self._info("已关闭自启。" if gateway.disable_autostart() else "未找到自启任务。")
+        self.refresh_settings()
 
     def _check_update(self):
         r = check_update()
-        if "error" in r:
-            messagebox.showerror("检查更新", "检查失败: " + r["error"])
-            return
-        if r["has_update"]:
-            msg = "发现新版本: " + r["latest_version"] + "\n\n"
-            msg += r["release_notes"] + "\n\n"
-            if r["download_url"]:
-                msg += "点击确定打开下载页面。"
-                if messagebox.askyesno("发现更新", msg):
-                    webbrowser.open(r["download_url"])
-            else:
-                msg += "点击确定打开 Release 页面。"
-                if messagebox.askyesno("发现更新", msg):
-                    webbrowser.open(r["release_url"])
+        if r.get("has_update"):
+            if QMessageBox.question(self, "发现更新", "发现新版本 {}，打开下载页?".format(r["latest_version"])) == QMessageBox.Yes:
+                webbrowser.open(r.get("download_url") or r.get("release_url"))
+        elif r.get("error"):
+            self._error("检查失败: " + r["error"])
         else:
-            messagebox.showinfo("检查更新", "当前版本 " + r["current_version"] + " 已是最新。")
+            self._info("当前已是最新版本。")
 
-    # ── Helpers ──
     def _bg(self, fn):
-        def _run():
-            try:
-                fn()
-            except Exception as ex:
-                self.root.after(0, lambda: messagebox.showerror("错误", str(ex)))
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        threading.Thread(target=lambda: self._safe_call(fn), daemon=True).start()
 
-# ── Add Model Dialog ──
-class AddModelDialog:
-    def __init__(self, parent):
+    def _safe_call(self, fn):
+        try:
+            fn()
+        except Exception as ex:
+            QTimer.singleShot(0, lambda: self._error(str(ex)))
+
+    def _info(self, text):
+        QMessageBox.information(self, APP_NAME, text)
+
+    def _warn(self, text):
+        QMessageBox.warning(self, APP_NAME, text)
+
+    def _error(self, text):
+        QMessageBox.critical(self, APP_NAME, text)
+
+    def show_window(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, event: QCloseEvent):
+        if self._allow_exit:
+            event.accept()
+            return
+        event.ignore()
+        self.hide()
+        self.tray.showMessage(APP_NAME, "已最小化到右下角托盘，网关继续运行。")
+
+    def exit_app(self):
+        self._allow_exit = True
+        QApplication.instance().quit()
+
+
+class ModelDialog(QDialog):
+    def __init__(self, parent=None, entry=None):
+        super().__init__(parent)
         self.result = None
-        self.win = tk.Toplevel(parent)
-        self.win.title("添加第三方模型")
-        self.win.geometry("620x520")
-        self.win.transient(parent)
-        self.win.grab_set()
-        self._build()
-        self.win.wait_window()
-
-    def _build(self):
-        f = self.win
-        self.api_type = tk.StringVar(value="responses")
-        self.base_url = tk.StringVar()
-        self.api_key = tk.StringVar()
-        self.model_id = tk.StringVar()
-        self.alias = tk.StringVar()
-        self.display_name = tk.StringVar()
-        self.provider_name = tk.StringVar()
-        self.ctx = tk.StringVar()
-        self.maxout = tk.StringVar()
-
-        ttk.Label(f, text="接口类型:").grid(row=0, column=0, sticky='w', padx=12, pady=4)
-        cb = ttk.Combobox(f, textvariable=self.api_type, state='readonly',
-                         values=["responses","openai","claude"], width=18)
-        cb.grid(row=0, column=1, padx=12, pady=4)
-
-        fields = [
-            ("API Base URL:", self.base_url),
-            ("API Key:", self.api_key),
-        ]
-        for i, (label, var) in enumerate(fields, 1):
-            ttk.Label(f, text=label).grid(row=i, column=0, sticky='w', padx=12, pady=4)
-            show = '*' if 'Key' in label else ''
-            ttk.Entry(f, textvariable=var, width=30, show=show).grid(row=i, column=1, padx=12, pady=4)
-
-        ttk.Label(f, text="上游模型ID:").grid(row=3, column=0, sticky='w', padx=12, pady=4)
-        self.model_combo = ttk.Combobox(f, textvariable=self.model_id, width=28)
-        self.model_combo.grid(row=3, column=1, padx=12, pady=4)
-        ttk.Button(f, text="获取模型列表", command=lambda: threading.Thread(target=self._fetch_models, daemon=True).start()).grid(row=3, column=2, padx=(0, 12), pady=4)
-
-        more_fields = [
-            ("Codex alias:", self.alias),
-            ("展示名称:", self.display_name),
-            ("供应商名称:", self.provider_name),
-            ("上下文token(可选):", self.ctx),
-            ("最大输出token(可选):", self.maxout),
-        ]
-        for i, (label, var) in enumerate(more_fields, 4):
-            ttk.Label(f, text=label).grid(row=i, column=0, sticky='w', padx=12, pady=4)
-            ttk.Entry(f, textvariable=var, width=30).grid(row=i, column=1, padx=12, pady=4)
-
-        ttk.Button(f, text="确定", command=self._ok).grid(row=9, column=0, columnspan=3, pady=16)
+        self.entry = entry or {}
+        self.setWindowTitle("模型配置")
+        self.resize(560, 430)
+        form = QFormLayout(self)
+        self.api_type = QComboBox()
+        self.api_type.addItems(["responses", "openai", "claude"])
+        self.base_url = QLineEdit(self.entry.get("base_url", ""))
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.Password)
+        self.model_id = QComboBox()
+        self.model_id.setEditable(True)
+        self.model_id.setEditText(self.entry.get("upstream", ""))
+        self.alias = QLineEdit(self.entry.get("alias", ""))
+        self.display_name = QLineEdit(self.entry.get("display_name", ""))
+        self.provider_name = QLineEdit(self.entry.get("provider_name", ""))
+        self.ctx = QLineEdit(str(self.entry.get("context_window") or ""))
+        self.maxout = QLineEdit(str(self.entry.get("max_output_tokens") or ""))
+        form.addRow("接口类型", self.api_type)
+        form.addRow("API Base URL", self.base_url)
+        form.addRow("API Key", self.api_key)
+        row = QHBoxLayout()
+        row.addWidget(self.model_id, 1)
+        fetch = QPushButton("获取模型列表")
+        fetch.clicked.connect(self._fetch_models)
+        row.addWidget(fetch)
+        form.addRow("上游模型 ID", row)
+        form.addRow("Codex 模型 ID", self.alias)
+        form.addRow("展示名称", self.display_name)
+        form.addRow("供应商名称", self.provider_name)
+        form.addRow("上下文 token", self.ctx)
+        form.addRow("最大输出 token", self.maxout)
+        btns = QHBoxLayout()
+        ok = QPushButton("确定")
+        cancel = QPushButton("取消")
+        cancel.setObjectName("Secondary")
+        ok.clicked.connect(self._ok)
+        cancel.clicked.connect(self.reject)
+        btns.addStretch(1)
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        form.addRow(btns)
 
     def _fetch_models(self):
-        base = self.base_url.get().strip().rstrip("/")
-        key = self.api_key.get().strip()
+        base = self.base_url.text().strip().rstrip("/")
+        key = self.api_key.text().strip()
         if not base or not key:
-            self.win.after(0, lambda: messagebox.showwarning("提示", "请先填写 URL 和 API Key。"))
+            QMessageBox.warning(self, "提示", "请先填写 URL 和 API Key。")
             return
         try:
-            req = urllib.request.Request(
-                base + "/models",
-                headers={"Authorization": "Bearer " + key, "User-Agent": APP_NAME},
-            )
-            resp = urllib.request.urlopen(req, timeout=20)
-            data = json.loads(resp.read().decode("utf-8"))
-            ids = sorted([
-                str(x.get("id") or x.get("name"))
-                for x in data.get("data", [])
-                if isinstance(x, dict) and (x.get("id") or x.get("name"))
-            ])
+            req = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + key, "User-Agent": APP_NAME})
+            data = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
+            ids = sorted([str(x.get("id") or x.get("name")) for x in data.get("data", []) if isinstance(x, dict) and (x.get("id") or x.get("name"))])
             if not ids:
-                raise ValueError("接口没有返回可识别的模型 ID。")
-            def apply():
-                self.model_combo["values"] = ids
-                self.model_id.set(ids[0])
-                messagebox.showinfo("模型列表", "已获取 " + str(len(ids)) + " 个模型。")
-            self.win.after(0, apply)
+                raise ValueError("没有返回模型 ID。")
+            self.model_id.clear()
+            self.model_id.addItems(ids)
         except Exception as ex:
-            self.win.after(0, lambda: messagebox.showwarning("模型列表", "获取失败，可手动填写模型 ID。\n\n" + str(ex)))
+            QMessageBox.warning(self, "获取失败", "可手动填写模型 ID。\n\n" + str(ex))
+
+    def _int_or_none(self, text):
+        text = text.strip()
+        return int(text) if text.isdigit() else None
 
     def _ok(self):
-        if not self.base_url.get() or not self.api_key.get() or not self.model_id.get():
-            messagebox.showwarning("提示", "URL、Key、模型ID 不能为空。")
+        model_id = self.model_id.currentText().strip()
+        if not self.entry and (not self.base_url.text().strip() or not self.api_key.text().strip() or not model_id):
+            QMessageBox.warning(self, "提示", "URL、Key、模型 ID 不能为空。")
             return
-        alias = self.alias.get().strip() or self.model_id.get().strip()
-        display = self.display_name.get().strip() or self.model_id.get().strip()
-        ctx = int(self.ctx.get()) if self.ctx.get().strip().isdigit() else None
-        maxout = int(self.maxout.get()) if self.maxout.get().strip().isdigit() else None
-        self.result = {
-            "api_type": self.api_type.get(),
-            "base_url": self.base_url.get().strip(),
-            "api_key": self.api_key.get().strip(),
-            "model_id": self.model_id.get().strip(),
-            "alias": alias,
-            "display_name": display,
-            "provider_name": self.provider_name.get().strip() or "Custom",
-            "context_window": ctx,
-            "max_output_tokens": maxout,
-        }
-        self.win.destroy()
+        if self.entry:
+            self.result = {
+                "base_url": self.base_url.text().strip(),
+                "api_key": self.api_key.text().strip() or None,
+                "upstream": model_id,
+                "alias": self.alias.text().strip() or model_id,
+                "display_name": self.display_name.text().strip() or model_id,
+                "provider_name": self.provider_name.text().strip() or "Custom",
+                "context_window": self._int_or_none(self.ctx.text()),
+                "max_output_tokens": self._int_or_none(self.maxout.text()),
+            }
+        else:
+            self.result = {
+                "api_type": self.api_type.currentText(),
+                "provider_name": self.provider_name.text().strip() or "Custom",
+                "base_url": self.base_url.text().strip(),
+                "api_key": self.api_key.text().strip(),
+                "model_id": model_id,
+                "alias": self.alias.text().strip() or model_id,
+                "display_name": self.display_name.text().strip() or model_id,
+                "context_window": self._int_or_none(self.ctx.text()),
+                "max_output_tokens": self._int_or_none(self.maxout.text()),
+            }
+        self.accept()
 
-# ── Modify Dialog ──
-class ModifyDialog:
-    def __init__(self, parent, vals):
-        self.result = None
-        self.vals = vals
-        self.win = tk.Toplevel(parent)
-        self.win.title("修改模型配置")
-        self.win.geometry("480x480")
-        self.win.transient(parent)
-        self.win.grab_set()
-        self._build()
-        self.win.wait_window()
 
-    def _build(self):
-        f = self.win
-        # vals: num, name, alias, upstream, provider, type, url, ctx, maxout, flag
-        fields = [
-            ("URL:", "base_url", self.vals[6]),
-            ("API Key (留空保留):", "api_key", ""),
-            ("上游模型名:", "upstream", self.vals[3]),
-            ("Codex alias:", "alias", self.vals[2]),
-            ("展示名称:", "display_name", self.vals[1]),
-            ("供应商名称:", "provider_name", self.vals[4]),
-            ("上下文token:", "context_window", self.vals[7] if self.vals[7] != "-" else ""),
-            ("最大输出token:", "max_output_tokens", self.vals[8] if self.vals[8] != "-" else ""),
-        ]
-        self.vars = {}
-        for i, (label, key, default) in enumerate(fields):
-            ttk.Label(f, text=label).grid(row=i, column=0, sticky='w', padx=12, pady=4)
-            v = tk.StringVar(value=default if default else "")
-            self.vars[key] = v
-            show = '*' if 'Key' in label else ''
-            ttk.Entry(f, textvariable=v, width=30, show=show).grid(row=i, column=1, padx=12, pady=4)
-        ttk.Button(f, text="确定", command=self._ok).grid(row=len(fields), column=0, columnspan=2, pady=16)
+class TextDialog(QDialog):
+    def __init__(self, title, text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(820, 620)
+        layout = QVBoxLayout(self)
+        editor = QPlainTextEdit()
+        editor.setPlainText(text)
+        editor.setReadOnly(True)
+        layout.addWidget(editor)
 
-    def _ok(self):
-        r = {}
-        for key, var in self.vars.items():
-            val = var.get().strip()
-            if val:
-                if key in ("context_window", "max_output_tokens"):
-                    if val.isdigit():
-                        r[key] = int(val)
-                    elif val.upper() == "CLEAR":
-                        r[key] = 0
-                elif key == "api_key":
-                    r[key] = val
-                else:
-                    r[key] = val
-        self.result = r
-        self.win.destroy()
+
+def _takeover_if_needed():
+    if not gateway.is_running() or gateway.is_managed_running():
+        runtime.ensure_all()
+        return True
+    info = gateway.get_process_info() or {}
+    msg = (
+        "检测到已有 CLIProxyAPI 正在运行，但不是当前软件托管的实例。\n\n"
+        "进程: {pid}\n路径: {path}\n\n"
+        "请选择“接管”，软件会停止当前命令行版本，继承现有配置并改由本软件托管；"
+        "如果不同意，软件将退出。"
+    ).format(pid=info.get("pid", "-"), path=info.get("path", "-"))
+    box = QMessageBox()
+    box.setWindowIcon(app_icon())
+    box.setWindowTitle("接管 CLIProxyAPI")
+    box.setText(msg)
+    takeover = box.addButton("接管并继承配置", QMessageBox.AcceptRole)
+    box.addButton("退出软件", QMessageBox.RejectRole)
+    box.exec()
+    if box.clickedButton() != takeover:
+        return False
+    restore_manager.create_restore_point("auto", "before-takeover", "接管外部 CLIProxyAPI 前自动保存")
+    config_manager.merge_external_config(gateway.running_config_path())
+    gateway.stop()
+    runtime.ensure_all()
+    runtime.update_cli_proxy_runtime_if_possible()
+    gateway.start()
+    restore_manager.create_restore_point("auto", "after-takeover", "接管外部 CLIProxyAPI 后自动保存")
+    return True
+
 
 def run():
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    app = QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    app.setWindowIcon(app_icon())
+    app.setStyleSheet(QSS)
+    if not _takeover_if_needed():
+        return
+    w = MainWindow()
+    w.show()
+    app.exec()

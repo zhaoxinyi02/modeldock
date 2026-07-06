@@ -1,4 +1,4 @@
-import os, subprocess, time, json, urllib.request, urllib.error
+import os, subprocess, time, json, urllib.request, urllib.error, datetime
 from constants import *
 import runtime
 
@@ -25,6 +25,74 @@ def get_pid():
         return None
     except Exception:
         return None
+
+
+def get_process_info():
+    pid = get_pid()
+    if not pid:
+        return None
+    try:
+        ps = (
+            "Get-CimInstance Win32_Process -Filter \"ProcessId=" + str(pid) + "\" | "
+            "Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
+        )
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=NO_WINDOW)
+        if r.returncode != 0 or not r.stdout.strip():
+            return {"pid": pid, "path": "", "command_line": ""}
+        data = json.loads(r.stdout)
+        return {
+            "pid": pid,
+            "path": data.get("ExecutablePath") or "",
+            "command_line": data.get("CommandLine") or "",
+        }
+    except Exception:
+        return {"pid": pid, "path": "", "command_line": ""}
+
+
+def _write_managed_state(pid=None):
+    os.makedirs(APP_RUNTIME_DIR, exist_ok=True)
+    data = {
+        "pid": pid or get_pid(),
+        "exe_path": EXE_PATH,
+        "config_path": CONFIG_PATH,
+        "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "managed_by": APP_NAME,
+        "version": APP_VERSION,
+    }
+    with open(MANAGED_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def is_managed_running():
+    info = get_process_info()
+    if not info:
+        return False
+    try:
+        with open(MANAGED_STATE_PATH, encoding="utf-8") as f:
+            state = json.load(f)
+        if int(state.get("pid") or 0) != int(info.get("pid") or 0):
+            return False
+        return os.path.abspath(state.get("exe_path") or "").lower() == os.path.abspath(info.get("path") or EXE_PATH).lower()
+    except Exception:
+        return False
+
+
+def running_config_path():
+    info = get_process_info()
+    if not info:
+        return None
+    cmd = info.get("command_line") or ""
+    import shlex
+    try:
+        parts = shlex.split(cmd, posix=False)
+    except Exception:
+        parts = cmd.split()
+    for i, part in enumerate(parts):
+        if part.strip('"').lower() == "-config" and i + 1 < len(parts):
+            return parts[i + 1].strip('"')
+    return CONFIG_PATH
 
 def get_gateway_url():
     import yaml
@@ -113,8 +181,12 @@ def start():
     for _ in range(40):
         time.sleep(0.5)
         if is_responding():
+            _write_managed_state()
             return True
-    return is_running()
+    ok = is_running()
+    if ok:
+        _write_managed_state()
+    return ok
 
 def stop():
     pid = get_pid()
@@ -125,7 +197,14 @@ def stop():
         except Exception:
             pass
     time.sleep(1)
-    return not is_running()
+    stopped = not is_running()
+    if stopped:
+        try:
+            if os.path.exists(MANAGED_STATE_PATH):
+                os.remove(MANAGED_STATE_PATH)
+        except OSError:
+            pass
+    return stopped
 
 def restart():
     stop()

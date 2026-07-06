@@ -1,5 +1,5 @@
 APP_NAME = "Codex Gateway Manager"
-APP_VERSION = "V2026.07.06b"
+APP_VERSION = "V2026.07.06c"
 GITHUB_OWNER = "zhaoxinyi02"
 GITHUB_REPO = "codex-gateway-manager"
 
@@ -11,6 +11,8 @@ CONFIG_PATH = os.path.join(INSTALL_DIR, "config.yaml")
 VBS_PATH = os.path.join(INSTALL_DIR, "start-hidden.vbs")
 AUTH_DIR = os.path.join(INSTALL_DIR, "auth")
 APP_RUNTIME_DIR = os.path.join(LOCAL_APPDATA, "CodexGatewayManager")
+MANAGED_STATE_PATH = os.path.join(APP_RUNTIME_DIR, "managed-state.json")
+RESTORE_ROOT = os.path.join(APP_RUNTIME_DIR, "restore-points")
 
 CODEX_HOME = os.path.join(os.path.expanduser("~"), ".codex")
 CODEX_CONFIG = os.path.join(CODEX_HOME, "config.toml")

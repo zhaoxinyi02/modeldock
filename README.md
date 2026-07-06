@@ -7,11 +7,15 @@ Codex Gateway Manager 是一个 Windows 单文件桌面工具，用来把 Codex 
 ## 功能
 
 - 一体化运行时：EXE 内包含 CLIProxyAPI，首次启动自动释放到 `%LOCALAPPDATA%\CLIProxyAPI`。
+- 现代桌面 UI：基于 PySide6/Qt 重写，带窗口图标、应用 logo、托盘常驻。
+- 接管保护：发现已有非本软件托管的 CLIProxyAPI 正在运行时，必须选择接管并继承配置，或退出软件。
 - Codex 控制：首页检测 Codex Desktop 是否运行，并提供打开、停止、重启按钮。
 - 网关控制：首页查看本地网关状态、PID、地址和当前可用模型。
 - 配置管理：可视化添加、修改、删除第三方模型，支持 OpenAI / Responses / Claude 三类接口。
 - 自动拉取模型：OpenAI 兼容接口可通过 `/models` 获取模型列表后选择。
-- 内置免费模型：默认包含 `GLM-4.7-Flash 免费内置`，该配置受保护，用户不可编辑或删除。
+- 内置免费模型：默认包含 `GLM-4.7-Flash 免费内置`，固定显示为 0 号，该配置受保护，用户不可编辑或删除。
+- 回退点：支持自动回退点和手动命名回退点，可恢复网关、Codex provider、模型目录和登录相关配置。
+- 登录状态：显示 Codex 安装/登录/官方账号套餐/第三方网关模式，本地读不到用量时会明确提示。
 - 登录与跳过登录：可以启动 Codex 官方登录，也可以一键修复为仅 API 模式。
 - 开机自启：通过 Windows 计划任务隐藏后台启动，不弹 PowerShell 窗口。
 - 一键修复：自动修复 `~/.codex/config.toml`，让 Codex 使用本地网关 provider。
@@ -47,10 +51,10 @@ Codex Gateway Manager 是一个 Windows 单文件桌面工具，用来把 Codex 
 
 ## 构建
 
-本项目使用 Python、Tkinter 和 PyInstaller。
+本项目使用 Python、PySide6/Qt 和 PyInstaller。
 
 ```powershell
-pip install pyyaml pyinstaller
+pip install -r requirements.txt
 pyinstaller build.spec --noconfirm
 ```
 
