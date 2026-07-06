@@ -1,5 +1,5 @@
 APP_NAME = "Codex Gateway Manager"
-APP_VERSION = "V2026.07.06c"
+APP_VERSION = "V2026.07.06d"
 GITHUB_OWNER = "zhaoxinyi02"
 GITHUB_REPO = "codex-gateway-manager"
 

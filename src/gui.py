@@ -35,26 +35,33 @@ def app_icon():
 
 
 QSS = """
-QMainWindow { background: #f6f8fb; }
+QMainWindow { background: #f5f7fb; }
 QWidget { font-family: "Microsoft YaHei UI", "Segoe UI"; font-size: 13px; color: #172033; }
-QLabel#Title { font-size: 22px; font-weight: 700; color: #0f172a; }
-QLabel#Subtitle { color: #64748b; }
+QLabel { border: none; background: transparent; }
+QLabel#Title { font-size: 26px; font-weight: 800; color: #0b1220; }
+QLabel#Subtitle { color: #64748b; font-size: 14px; }
 QLabel#CardTitle { font-size: 15px; font-weight: 700; color: #0f172a; }
-QFrame, QWidget#Card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; }
-QPushButton { background: #0f172a; color: #ffffff; border: 0; border-radius: 8px; padding: 8px 14px; }
-QPushButton:hover { background: #1e293b; }
-QPushButton:disabled { background: #cbd5e1; color: #64748b; }
-QPushButton#Secondary { background: #e2e8f0; color: #0f172a; }
-QPushButton#Secondary:hover { background: #cbd5e1; }
+QLabel#Metric { color: #64748b; font-size: 12px; }
+QLabel#Value { color: #0f172a; font-size: 21px; font-weight: 800; }
+QLabel#Pill { color: #075985; background: #e0f2fe; border-radius: 10px; padding: 5px 10px; font-weight: 700; }
+QWidget#Card { background: #ffffff; border: 1px solid #e7ebf0; border-radius: 14px; }
+QWidget#HeroCard { background: #0f172a; border-radius: 18px; }
+QLabel#HeroTitle { color: white; font-size: 24px; font-weight: 800; }
+QLabel#HeroText { color: #cbd5e1; font-size: 14px; }
+QPushButton { background: #111827; color: #ffffff; border: 0; border-radius: 9px; padding: 9px 16px; font-weight: 600; }
+QPushButton:hover { background: #1f2937; }
+QPushButton:disabled { background: #d8e0ea; color: #7b8794; }
+QPushButton#Secondary { background: #e8eef6; color: #172033; }
+QPushButton#Secondary:hover { background: #dbe4ef; }
 QPushButton#Danger { background: #dc2626; }
 QPushButton#Danger:hover { background: #b91c1c; }
 QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {
-  background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px;
+  background: #ffffff; border: 1px solid #d6dee8; border-radius: 9px; padding: 8px;
 }
-QTableWidget { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; gridline-color: #eef2f7; }
-QHeaderView::section { background: #f1f5f9; color: #334155; padding: 8px; border: 0; font-weight: 600; }
-QListWidget { background: #0f172a; color: #cbd5e1; border: 0; padding: 10px; }
-QListWidget::item { padding: 12px; border-radius: 8px; }
+QTableWidget { background: #ffffff; border: 1px solid #e7ebf0; border-radius: 12px; gridline-color: #eef2f7; selection-background-color: #dbeafe; selection-color: #0f172a; }
+QHeaderView::section { background: #f8fafc; color: #334155; padding: 9px; border: 0; border-bottom: 1px solid #e2e8f0; font-weight: 700; }
+QListWidget { background: #0b1220; color: #cbd5e1; border: 0; padding: 14px; font-size: 14px; }
+QListWidget::item { padding: 13px 16px; border-radius: 10px; margin: 3px 0; }
 QListWidget::item:selected { background: #2563eb; color: white; }
 """
 
@@ -69,6 +76,36 @@ class Card(QWidget):
         label = QLabel(title)
         label.setObjectName("CardTitle")
         self.layout.addWidget(label)
+
+
+class HeroCard(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("HeroCard")
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(22, 18, 22, 18)
+        self.layout.setSpacing(8)
+        self.title = QLabel("检测中")
+        self.title.setObjectName("HeroTitle")
+        self.text = QLabel("")
+        self.text.setObjectName("HeroText")
+        self.text.setWordWrap(True)
+        self.layout.addWidget(self.title)
+        self.layout.addWidget(self.text)
+
+
+class Metric(QWidget):
+    def __init__(self, label):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self.value = QLabel("-")
+        self.value.setObjectName("Value")
+        caption = QLabel(label)
+        caption.setObjectName("Metric")
+        layout.addWidget(self.value)
+        layout.addWidget(caption)
 
 
 class MainWindow(QMainWindow):
@@ -120,10 +157,15 @@ class MainWindow(QMainWindow):
 
     def _status_page(self):
         page, layout = self._page("Codex Gateway", "统一托管 Codex 官方模型和第三方 API 模型")
+        self.mode_hero = HeroCard()
+        layout.addWidget(self.mode_hero)
         grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(16)
         layout.addLayout(grid)
         self.gateway_card = Card("本地网关")
         self.gateway_status = QLabel("检测中")
+        self.gateway_status.setObjectName("Pill")
         self.gateway_detail = QLabel("")
         self.gateway_models = QLabel("")
         self.gateway_card.layout.addWidget(self.gateway_status)
@@ -144,6 +186,7 @@ class MainWindow(QMainWindow):
 
         self.codex_card = Card("Codex Desktop")
         self.codex_status = QLabel("检测中")
+        self.codex_status.setObjectName("Pill")
         self.codex_detail = QLabel("")
         self.codex_card.layout.addWidget(self.codex_status)
         self.codex_card.layout.addWidget(self.codex_detail)
@@ -159,6 +202,7 @@ class MainWindow(QMainWindow):
 
         self.account_card = Card("官方账号")
         self.account_status = QLabel("")
+        self.account_status.setTextFormat(Qt.RichText)
         self.account_card.layout.addWidget(self.account_status)
         grid.addWidget(self.gateway_card, 0, 0)
         grid.addWidget(self.codex_card, 0, 1)
@@ -328,8 +372,21 @@ class MainWindow(QMainWindow):
         self.codex_restart_btn.setEnabled(cs["running"])
 
         ai = account_info.get_account_info()
+        self.mode_hero.title.setText(ai["mode"])
+        desc_map = {
+            "pure_official": "当前 Codex 使用官方 provider，没有接入本地 CLIProxyAPI 第三方模型网关。",
+            "official_plus_api": "当前 Codex 使用本地 CLIProxyAPI provider，同时保留官方订阅登录，可在同一会话里切换官方模型和第三方 API 模型。",
+            "api_only": "当前 Codex 使用本地 CLIProxyAPI provider，不依赖官方订阅登录，适合只用自配 API 的用户。",
+            "not_logged_in": "Codex 已安装，但未检测到官方账号登录。",
+            "not_installed": "未检测到 Codex Desktop 安装。",
+        }
+        self.mode_hero.text.setText(desc_map.get(ai["mode_key"], "当前模式需要检查 Codex 配置。"))
         self.account_status.setText(
-            "模式: {mode}\n邮箱: {email}\n套餐: {plan}\n过期: {expired}\n第三方模型: {third_party_count}\n用量: {usage}".format(**ai)
+            "<b>邮箱</b>：{email}<br>"
+            "<b>套餐</b>：{plan}<br>"
+            "<b>过期</b>：{expired}<br>"
+            "<b>第三方模型</b>：{third_party_count}<br>"
+            "<b>用量</b>：{usage}".format(**ai)
         )
 
     def refresh_config(self):
@@ -365,7 +422,7 @@ class MainWindow(QMainWindow):
 
     def refresh_settings(self):
         ai = account_info.get_account_info()
-        self.mode_label.setText("当前状态: {mode}\n邮箱: {email}\n套餐: {plan}".format(**ai))
+        self.mode_label.setText("当前模式: {mode}\n邮箱: {email}\n套餐: {plan}\n说明: 纯官方订阅 / 官方订阅 + 第三方 API / 纯 API + 第三方模型会在这里明确区分。".format(**ai))
         try:
             self.port_edit.setText(str(config_manager.get_port()))
         except Exception:
@@ -693,10 +750,13 @@ def _takeover_if_needed():
     if box.clickedButton() != takeover:
         return False
     restore_manager.create_restore_point("auto", "before-takeover", "接管外部 CLIProxyAPI 前自动保存")
+    before = account_info.get_account_info()
+    requires_auth = before.get("mode_key") != "api_only" and before.get("logged_in")
     config_manager.merge_external_config(gateway.running_config_path())
     gateway.stop()
     runtime.ensure_all()
     runtime.update_cli_proxy_runtime_if_possible()
+    codex_repair.repair_codex_config(bool(requires_auth))
     gateway.start()
     restore_manager.create_restore_point("auto", "after-takeover", "接管外部 CLIProxyAPI 后自动保存")
     return True
