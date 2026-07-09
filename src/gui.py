@@ -782,22 +782,54 @@ class ModelDialog(QDialog):
         btns.addWidget(cancel)
         form.addRow(btns)
 
+    def _model_list_candidates(self, base, api_type):
+        from urllib.parse import urlparse
+        candidates = [base + "/models"]
+        host = (urlparse(base).hostname or "").lower()
+        # 火山方舟: plan/coding 等专用接口没有 /models 列表, 统一回退到 /api/v3/models
+        if host == "ark.cn-beijing.volces.com":
+            candidates.append("https://ark.cn-beijing.volces.com/api/v3/models")
+        # Anthropic 官方: 用 x-api-key, 列表地址固定
+        if api_type == "claude" and "anthropic.com" in host:
+            candidates.append("https://api.anthropic.com/v1/models")
+        seen, out = set(), []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+        return out
+
     def _fetch_models(self):
         base = self.base_url.text().strip().rstrip("/")
         key = self.api_key.text().strip()
         if not base or not key:
             QMessageBox.warning(self, "提示", "请先填写 URL 和 API Key。")
             return
-        try:
-            req = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + key, "User-Agent": APP_NAME})
-            data = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
-            ids = sorted([str(x.get("id") or x.get("name")) for x in data.get("data", []) if isinstance(x, dict) and (x.get("id") or x.get("name"))])
-            if not ids:
-                raise ValueError("没有返回模型 ID。")
+        api_type = self.api_type.currentText()
+        headers = {"User-Agent": APP_NAME}
+        if api_type == "claude":
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = "Bearer " + key
+        last_error = None
+        ids = []
+        for url in self._model_list_candidates(base, api_type):
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                data = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
+                found = [str(x.get("id") or x.get("name")) for x in data.get("data", []) if isinstance(x, dict) and (x.get("id") or x.get("name"))]
+                if found:
+                    ids = sorted(set(found))
+                    break
+            except Exception as ex:
+                last_error = ex
+                continue
+        if ids:
             self.model_id.clear()
             self.model_id.addItems(ids)
-        except Exception as ex:
-            QMessageBox.warning(self, "获取失败", "可手动填写模型 ID。\n\n" + str(ex))
+        else:
+            QMessageBox.warning(self, "获取失败", "该接口未返回模型列表，可手动填写模型 ID。\n\n" + (str(last_error) if last_error else ""))
 
     def _int_or_none(self, text):
         text = text.strip()
