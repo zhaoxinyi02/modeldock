@@ -37,6 +37,17 @@ def _builtin_alias_like(value):
     return value in BUILTIN_ALIASES or value.startswith(BUILTIN_DISPLAY_NAME + " (")
 
 
+def invalidate_codex_model_cache():
+    """Remove Codex's disposable model catalog cache after provider changes."""
+    try:
+        if os.path.exists(MODELS_CACHE_PATH):
+            os.remove(MODELS_CACHE_PATH)
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def ensure_base_files():
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(AUTH_DIR, exist_ok=True)
@@ -194,6 +205,7 @@ def expose_display_names_to_codex():
     if changes:
         save_config(cfg)
         save_catalog(cat)
+        invalidate_codex_model_cache()
     return changes
 
 def _merge_list_unique(target, source, key_fn):
@@ -427,6 +439,7 @@ def add_model(api_type, provider_name, base_url, api_key,
 
     save_config(cfg)
     save_catalog(cat)
+    invalidate_codex_model_cache()
     return alias
 
 def modify_model(number, base_url=None, api_key=None, upstream=None,
@@ -504,6 +517,7 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
 
     save_config(cfg)
     save_catalog(cat)
+    invalidate_codex_model_cache()
     return new_alias
 
 def remove_model(number):
@@ -530,6 +544,7 @@ def remove_model(number):
     set_max_output(cfg, alias, None)
     save_config(cfg)
     save_catalog(cat)
+    invalidate_codex_model_cache()
     return alias
 
 def get_redacted_config():
@@ -640,4 +655,6 @@ def ensure_builtin_model():
     })
     save_config(cfg)
     save_catalog(cat)
+    if changed:
+        invalidate_codex_model_cache()
     return changed

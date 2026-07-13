@@ -73,8 +73,17 @@ def ensure_all():
     ok, msg = ensure_cli_proxy_runtime()
     if not ok:
         return False, msg
-    from config_manager import ensure_base_files, ensure_builtin_model, expose_display_names_to_codex
+    from config_manager import (
+        ensure_base_files,
+        ensure_builtin_model,
+        expose_display_names_to_codex,
+        invalidate_codex_model_cache,
+    )
     ensure_base_files()
     ensure_builtin_model()
     expose_display_names_to_codex()
+    # The desktop client caches rich model metadata separately from the
+    # gateway.  Clearing this disposable file makes display-name fixes and a
+    # bundled CLIProxyAPI upgrade visible on the next Codex restart.
+    invalidate_codex_model_cache()
     return True, "运行时已就绪。"

@@ -1,5 +1,5 @@
 APP_NAME = "ModelDock"
-APP_VERSION = "V2026.07.13f"
+APP_VERSION = "V2026.07.13g"
 GITHUB_OWNER = "zhaoxinyi02"
 GITHUB_REPO = "modeldock"
 
@@ -17,6 +17,7 @@ RESTORE_ROOT = os.path.join(APP_RUNTIME_DIR, "restore-points")
 CODEX_HOME = os.path.join(os.path.expanduser("~"), ".codex")
 CODEX_CONFIG = os.path.join(CODEX_HOME, "config.toml")
 CATALOG_PATH = os.path.join(CODEX_HOME, "custom-model-catalog.json")
+MODELS_CACHE_PATH = os.path.join(CODEX_HOME, "models_cache.json")
 
 GATEWAY_KEY = "codex-local-cliproxy"
 GATEWAY_DEFAULT_PORT = 8317
