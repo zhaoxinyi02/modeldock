@@ -62,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ModelDock-Windows-x64
-          path: dist/*.exe
+          path: dist/ModelDock_V*.exe
 
   build-macos:
     name: macOS Apple Silicon
