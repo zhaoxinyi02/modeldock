@@ -10,7 +10,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
+    name: Windows x64
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,14 +61,62 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ModelDock
+          name: ModelDock-Windows-x64
           path: dist/*.exe
 
+  build-macos:
+    name: macOS Apple Silicon
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Inject built-in free model key
+        env:
+          BUILTIN_GLM_API_KEY: ${{ secrets.BUILTIN_GLM_API_KEY }}
+        run: |
+          test -n "$BUILTIN_GLM_API_KEY"
+          python - <<'PY'
+          import json, os
+          with open("src/secrets_runtime.py", "w", encoding="utf-8") as handle:
+              handle.write("BUILTIN_GLM_API_KEY = " + json.dumps(os.environ["BUILTIN_GLM_API_KEY"]) + "\n")
+          PY
+
+      - name: Build application and DMG
+        run: ./scripts/build_macos.sh
+
+      - name: Verify application and DMG
+        run: |
+          codesign --verify --deep --strict dist/ModelDock.app
+          hdiutil verify dist/ModelDock_*_macOS_arm64.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModelDock-macOS-arm64
+          path: dist/*_macOS_arm64.dmg
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/V')
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/V')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/*.dmg
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

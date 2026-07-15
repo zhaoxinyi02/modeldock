@@ -1,4 +1,4 @@
-import json, urllib.request
+import json, urllib.request, sys
 import re
 from constants import *
 
@@ -45,9 +45,10 @@ def check_update():
             }
 
 def _get_download_url(release_data):
+    suffix = ".dmg" if sys.platform == "darwin" else ".exe"
     for asset in release_data.get("assets", []):
         name = asset.get("name", "")
-        if name.endswith(".exe"):
+        if name.endswith(suffix):
             return asset.get("browser_download_url", "")
     return ""
 

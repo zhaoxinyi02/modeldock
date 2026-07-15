@@ -10,11 +10,11 @@ def _bundled_cli_proxy_path():
     candidates = []
     if getattr(sys, "frozen", False):
         base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-        candidates.append(os.path.join(base, "cli-proxy-api.exe"))
-        candidates.append(os.path.join(base, "assets", "cli-proxy-api.exe"))
+        candidates.append(os.path.join(base, CLI_PROXY_NAME))
+        candidates.append(os.path.join(base, "assets", CLI_PROXY_NAME))
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates.append(os.path.join(here, "assets", "cli-proxy-api.exe"))
-    candidates.append(os.path.join(INSTALL_DIR, "cli-proxy-api.exe"))
+    candidates.append(os.path.join(here, "assets", CLI_PROXY_NAME))
+    candidates.append(os.path.join(INSTALL_DIR, CLI_PROXY_NAME))
     for path in candidates:
         if os.path.exists(path):
             return path
@@ -26,7 +26,7 @@ def ensure_cli_proxy_runtime():
     os.makedirs(AUTH_DIR, exist_ok=True)
     bundled = _bundled_cli_proxy_path()
     if not bundled:
-        return False, "未找到内置 cli-proxy-api.exe。"
+        return False, "未找到内置 CLIProxyAPI 运行时。"
     if os.path.abspath(bundled).lower() != os.path.abspath(EXE_PATH).lower():
         should_copy = not os.path.exists(EXE_PATH)
         if not should_copy:
@@ -41,13 +41,15 @@ def ensure_cli_proxy_runtime():
                 if os.path.exists(EXE_PATH):
                     return True, "现有 CLIProxyAPI 正在运行，已沿用当前运行时。"
                 return False, "CLIProxyAPI 正在被占用，且本地运行时不存在。"
+    if not IS_WINDOWS and os.path.exists(EXE_PATH):
+        os.chmod(EXE_PATH, os.stat(EXE_PATH).st_mode | 0o755)
     return os.path.exists(EXE_PATH), EXE_PATH
 
 
 def update_cli_proxy_runtime_if_possible():
     bundled = _bundled_cli_proxy_path()
     if not bundled:
-        return False, "未找到内置 cli-proxy-api.exe。"
+        return False, "未找到内置 CLIProxyAPI 运行时。"
     os.makedirs(INSTALL_DIR, exist_ok=True)
     if os.path.abspath(bundled).lower() == os.path.abspath(EXE_PATH).lower():
         return True, "已使用本地运行时。"

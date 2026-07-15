@@ -1,18 +1,33 @@
 APP_NAME = "ModelDock"
-APP_VERSION = "V2026.07.13g"
+APP_VERSION = "V2026.07.15k"
 GITHUB_OWNER = "zhaoxinyi02"
 GITHUB_REPO = "modeldock"
 
-import os, tempfile
-LOCAL_APPDATA = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-INSTALL_DIR = os.path.join(LOCAL_APPDATA, "CLIProxyAPI")
-EXE_PATH = os.path.join(INSTALL_DIR, "cli-proxy-api.exe")
+import os, sys, tempfile
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    APP_DATA_ROOT = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+else:
+    APP_DATA_ROOT = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+
+INSTALL_DIR = os.path.join(APP_DATA_ROOT, "CLIProxyAPI")
+CLI_PROXY_NAME = "cli-proxy-api.exe" if IS_WINDOWS else "cli-proxy-api"
+EXE_PATH = os.path.join(INSTALL_DIR, CLI_PROXY_NAME)
 CONFIG_PATH = os.path.join(INSTALL_DIR, "config.yaml")
 VBS_PATH = os.path.join(INSTALL_DIR, "start-hidden.vbs")
 AUTH_DIR = os.path.join(INSTALL_DIR, "auth")
-APP_RUNTIME_DIR = os.path.join(LOCAL_APPDATA, "CodexGatewayManager")
+APP_RUNTIME_DIR = os.path.join(
+    APP_DATA_ROOT, "CodexGatewayManager" if IS_WINDOWS else "ModelDock"
+)
 MANAGED_STATE_PATH = os.path.join(APP_RUNTIME_DIR, "managed-state.json")
 RESTORE_ROOT = os.path.join(APP_RUNTIME_DIR, "restore-points")
+LAUNCH_AGENT_LABEL = "com.modeldock.gateway"
+LAUNCH_AGENT_PATH = os.path.join(
+    os.path.expanduser("~"), "Library", "LaunchAgents", LAUNCH_AGENT_LABEL + ".plist"
+)
 
 CODEX_HOME = os.path.join(os.path.expanduser("~"), ".codex")
 CODEX_CONFIG = os.path.join(CODEX_HOME, "config.toml")

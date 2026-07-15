@@ -1,12 +1,40 @@
 import glob
 import os
+import signal
+import shlex
 import subprocess
+import sys
 import time
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _codex_processes():
+    if sys.platform == "darwin":
+        try:
+            r = subprocess.run(
+                ["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=8
+            )
+            found = []
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                pid_text, _, command = line.partition(" ")
+                try:
+                    parts = shlex.split(command)
+                except ValueError:
+                    parts = command.split()
+                path = parts[0] if parts else ""
+                name = os.path.basename(path)
+                if name not in ("Codex", "ChatGPT"):
+                    continue
+                if ".app/Contents/" not in path:
+                    continue
+                found.append({"pid": int(pid_text), "path": path, "name": name})
+            return found
+        except Exception:
+            return []
     try:
         ps = (
             "Get-Process Codex,ChatGPT -ErrorAction SilentlyContinue | "
@@ -46,6 +74,17 @@ def get_status():
 
 
 def _candidate_paths():
+    if sys.platform == "darwin":
+        candidates = [
+            "/Applications/Codex.app",
+            os.path.expanduser("~/Applications/Codex.app"),
+            "/Applications/ChatGPT.app",
+            os.path.expanduser("~/Applications/ChatGPT.app"),
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                yield path
+        return
     local = os.environ.get("LOCALAPPDATA", "")
     candidates = [
         os.path.join(local, "OpenAI", "Codex", "ChatGPT.exe"),
@@ -80,6 +119,17 @@ def _app_ids():
 def start():
     if is_running():
         return True
+    if sys.platform == "darwin":
+        for path in _candidate_paths():
+            try:
+                subprocess.run(["open", path], capture_output=True, timeout=8)
+                for _ in range(50):
+                    time.sleep(0.3)
+                    if is_running():
+                        return True
+            except Exception:
+                pass
+        return False
     for app_id in _app_ids():
         uri = "shell:AppsFolder\\" + app_id
         try:
@@ -117,13 +167,22 @@ def stop():
     processes = sorted(_codex_processes(), key=lambda p: p.get("name") != "ChatGPT")
     for proc in processes:
         try:
-            subprocess.run(["taskkill", "/pid", str(proc["pid"]), "/t", "/f"], capture_output=True, timeout=8, creationflags=NO_WINDOW)
+            if sys.platform == "darwin":
+                os.kill(proc["pid"], signal.SIGTERM)
+            else:
+                subprocess.run(["taskkill", "/pid", str(proc["pid"]), "/t", "/f"], capture_output=True, timeout=8, creationflags=NO_WINDOW)
         except Exception:
             pass
     for _ in range(30):
         if not is_running():
             return True
         time.sleep(0.2)
+    if sys.platform == "darwin":
+        for proc in _codex_processes():
+            try:
+                os.kill(proc["pid"], signal.SIGKILL)
+            except OSError:
+                pass
     return not is_running()
 
 
