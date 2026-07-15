@@ -4,10 +4,13 @@ import sys
 import threading
 import urllib.request
 import webbrowser
-import winreg
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QIcon
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -30,6 +33,8 @@ from version import check_update
 
 def system_dark_mode():
     try:
+        if winreg is None:
+            raise RuntimeError("Windows registry is unavailable")
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
         return int(winreg.QueryValueEx(key, "AppsUseLightTheme")[0]) == 0
     except Exception:
@@ -40,20 +45,54 @@ def system_dark_mode():
 def app_icon(dark=None):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
     dark = system_dark_mode() if dark is None else dark
-    for name in (
-        ("app_icon_light.ico" if dark else "app_icon_dark.ico"),
-        ("app_logo_light.png" if dark else "app_logo_dark.png"),
-        "app_icon.ico",
-    ):
+    if IS_MACOS:
+        names = ("app_icon_macos.png", "logo.png")
+    else:
+        names = (
+            ("app_logo_light.png" if dark else "app_logo_dark.png"),
+            ("app_icon_light.ico" if dark else "app_icon_dark.ico"),
+            "app_icon.ico",
+        )
+    for name in names:
         path = os.path.join(base, "assets", name)
         if os.path.exists(path):
             return QIcon(path)
     return QIcon()
 
 
+def tray_icon():
+    if not IS_MACOS:
+        return app_icon()
+    roots = [
+        getattr(sys, "_MEIPASS", ""),
+        os.path.abspath(os.path.join(os.path.dirname(sys.executable), "..", "Resources")),
+        os.path.dirname(os.path.dirname(__file__)),
+    ]
+    paths = []
+    for root in roots:
+        if root:
+            paths.extend((
+                os.path.join(root, "assets", "menu_bar_iconTemplate@2x.png"),
+                os.path.join(root, "assets", "menu_bar_iconTemplate.png"),
+            ))
+    icon = QIcon()
+    for path in paths:
+        if not os.path.isfile(path):
+            continue
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            icon = QIcon(pixmap)
+            break
+    # Never fall back to the orange application icon in the macOS menu bar.
+    if icon.isNull():
+        return QIcon()
+    icon.setIsMask(True)
+    return icon
+
+
 LIGHT_QSS = """
 QMainWindow { background: #f8f9fb; }
-QWidget { font-family: "Segoe UI", "Microsoft YaHei UI"; font-size: 13px; color: #202124; }
+QWidget { font-family: "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei UI"; font-size: 13px; color: #202124; }
 QLabel { border: none; background: transparent; }
 QLabel#Title { font-size: 25px; font-weight: 700; color: #202124; }
 QLabel#Subtitle { color: #5f6368; font-size: 13px; }
@@ -219,7 +258,8 @@ class MainWindow(QMainWindow):
         icon = app_icon(dark)
         self.setWindowIcon(icon)
         if hasattr(self, "tray"):
-            self.tray.setIcon(icon)
+            self._tray_template_icon = tray_icon() if IS_MACOS else icon
+            self.tray.setIcon(self._tray_template_icon)
 
     def _page(self, title, subtitle):
         page = QWidget()
@@ -348,6 +388,10 @@ class MainWindow(QMainWindow):
         status.layout.addWidget(self.mode_label)
         self.provider_state_label = QLabel("")
         status.layout.addWidget(self.provider_state_label)
+        login_btn = QPushButton("登录/刷新网关官方订阅凭据")
+        login_btn.setObjectName("Secondary")
+        login_btn.clicked.connect(self._codex_login)
+        status.layout.addWidget(login_btn)
         mode_btns = QHBoxLayout()
         self.mode_buttons = {}
         for key, text, fn in [
@@ -421,7 +465,9 @@ class MainWindow(QMainWindow):
         self.nav.setFocusPolicy(Qt.NoFocus)
 
     def _build_tray(self):
-        self.tray = QSystemTrayIcon(app_icon(), self)
+        self.tray = QSystemTrayIcon(self)
+        self._tray_template_icon = tray_icon()
+        self.tray.setIcon(self._tray_template_icon)
         self.tray.setToolTip(APP_NAME)
         menu = self.tray.contextMenu()
         if menu is None:
@@ -440,6 +486,10 @@ class MainWindow(QMainWindow):
         menu.addAction(quit_action)
         self.tray.activated.connect(lambda reason: self.show_window() if reason == QSystemTrayIcon.DoubleClick else None)
         self.tray.show()
+        # AppKit can briefly replace an early tray icon with the application icon
+        # while the menu-bar item is being attached. Reapply it after attachment.
+        QTimer.singleShot(0, lambda: self.tray.setIcon(self._tray_template_icon))
+        QTimer.singleShot(500, lambda: self.tray.setIcon(self._tray_template_icon))
 
     def _switch_page(self, index):
         self.stack.setCurrentIndex(index)
@@ -494,9 +544,13 @@ class MainWindow(QMainWindow):
         self.account_status.setText(
             "<b>邮箱</b>：{email}<br>"
             "<b>套餐</b>：{plan}<br>"
-            "<b>过期</b>：{expired}<br>"
+            "<b>订阅有效期至</b>：{expired}<br>"
+            "<b>网关订阅凭据</b>：{gateway_auth}<br>"
             "<b>第三方模型</b>：{third_party_count}<br>"
-            "<b>用量</b>：{usage}".format(**ai)
+            "<b>用量</b>：{usage}".format(
+                gateway_auth="已就绪" if ai.get("gateway_logged_in") else "未配置（混合模式需登录一次）",
+                **ai
+            )
         )
 
     def refresh_config(self):
@@ -758,10 +812,13 @@ class MainWindow(QMainWindow):
         )
 
     def _codex_login(self):
-        if gateway.run_codex_login():
-            self._info("已启动 Codex 官方登录流程，请按浏览器提示完成授权。")
+        ok, message = gateway.run_codex_login()
+        if ok:
+            self.refresh_settings()
+            self.refresh_status()
+            self._info(message)
         else:
-            self._error("无法启动登录流程。")
+            self._error(message)
 
     def _start_gateway(self):
         return gateway.start()
@@ -928,7 +985,7 @@ class MainWindow(QMainWindow):
             return
         event.ignore()
         self.hide()
-        self.tray.showMessage(APP_NAME, "已最小化到右下角托盘，网关继续运行。")
+        self.tray.showMessage(APP_NAME, "已最小化到菜单栏/系统托盘，网关继续运行。")
 
     def exit_app(self):
         self._allow_exit = True
