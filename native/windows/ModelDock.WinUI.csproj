@@ -27,8 +27,5 @@
     <Content Include="..\..\assets\app_icon.ico" Link="Assets\app_icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\..\assets\app_logo_light.png" Link="Assets\app_logo_light.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 </Project>

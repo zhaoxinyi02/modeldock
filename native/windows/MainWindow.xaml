@@ -10,7 +10,7 @@
                         IsSettingsVisible="False" OpenPaneLength="230" SelectionChanged="Navigation_SelectionChanged">
             <NavigationView.PaneHeader>
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="4,10,0,14">
-                    <Image Source="Assets/app_logo_light.png" Width="30" Height="30"/>
+                    <FontIcon Glyph="&#xE950;" FontSize="24" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                     <TextBlock Text="ModelDock" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
             </NavigationView.PaneHeader>
