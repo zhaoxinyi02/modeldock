@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
         try
         {
             InitializeComponent();
+            BuildInterface();
             try
             {
                 if (Microsoft.UI.Composition.SystemBackdrops.MicaController.IsSupported())
@@ -130,10 +131,8 @@ public sealed partial class MainWindow : Window
             AccountRefreshText.Text = state.Account.RefreshedAt;
             ThirdPartyCountText.Text = state.Account.ThirdPartyCount.ToString();
 
-            ModelsList.ItemsSource = null;
-            ModelsList.ItemsSource = state.Models.OrderBy(item => item.Order).ToList();
-            RestoresList.ItemsSource = null;
-            RestoresList.ItemsSource = state.RestorePoints;
+            PopulateModels(state.Models.OrderBy(item => item.Order));
+            PopulateRestores(state.RestorePoints);
 
             LoginStatusText.Text = $"当前模式：{state.Account.Mode}\n账号：{state.Account.Email}    套餐：{state.Account.Plan}\n实际 provider：{state.Provider.ModelProvider}";
             ConversationText.Text = $"活动 {state.Conversation.ActiveSessions}    归档 {state.Conversation.ArchivedSessions}    侧栏索引 {state.Conversation.IndexedThreads}    快照 {state.Conversation.Snapshots}";
@@ -173,7 +172,7 @@ public sealed partial class MainWindow : Window
         if (sender is Button button) await RunAsync<ActionResult>("codex_action", new { action = button.Tag?.ToString() });
     }
 
-    private ModelEntry? SelectedModel => ModelsList.SelectedItem as ModelEntry;
+    private ModelEntry? SelectedModel => (ModelsList.SelectedItem as ListViewItem)?.Tag as ModelEntry;
 
     private async void AddModel_Click(object sender, RoutedEventArgs e)
     {
@@ -235,7 +234,7 @@ public sealed partial class MainWindow : Window
 
     private async void Restore_Click(object sender, RoutedEventArgs e)
     {
-        if (RestoresList.SelectedItem is not RestorePoint selected) return;
+        if ((RestoresList.SelectedItem as ListViewItem)?.Tag is not RestorePoint selected) return;
         var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = "恢复回退点？", Content = selected.Name, PrimaryButtonText = "恢复", CloseButtonText = "取消" };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await RunAsync<ActionResult>("restore", new { id = selected.Id }, "回退点恢复完成。");
