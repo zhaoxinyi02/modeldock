@@ -16,6 +16,14 @@ import restore_manager
 import runtime
 from constants import APP_NAME, APP_VERSION
 
+# Frozen console helpers inherit the active Windows code page. The native
+# frontends always exchange JSON as UTF-8, including Chinese model names.
+for stream in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 def _after_config_change(name):
     config_manager.ensure_builtin_model()
