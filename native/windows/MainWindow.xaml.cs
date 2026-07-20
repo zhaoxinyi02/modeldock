@@ -20,7 +20,17 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        SystemBackdrop = new MicaBackdrop();
+        try
+        {
+            if (Microsoft.UI.Composition.SystemBackdrops.MicaController.IsSupported())
+                SystemBackdrop = new MicaBackdrop();
+        }
+        catch
+        {
+            // Remote Desktop, Windows Server and disabled-transparency systems
+            // can reject backdrop creation. Native controls still work with
+            // the system's solid fallback background.
+        }
         ConfigureWindow();
         Activated += async (_, _) =>
         {

@@ -80,7 +80,13 @@ jobs:
           if ($json.ok -ne $true -or [string]$json.result.version -ne [string]$version) { throw "Backend snapshot smoke test failed." }
           $app = Start-Process -FilePath (Join-Path $install "ModelDock.exe") -PassThru
           Start-Sleep -Seconds 8
-          if ($app.HasExited) { throw "WinUI app exited during startup: $($app.ExitCode)" }
+          if ($app.HasExited) {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.Message -match 'ModelDock|Microsoft.UI.Xaml|CoreMessaging|WinUI' } |
+              Select-Object -First 8 TimeCreated, ProviderName, Id, LevelDisplayName, Message |
+              Format-List | Out-String | Write-Host
+            throw "WinUI app exited during startup: $($app.ExitCode)"
+          }
           Stop-Process -Id $app.Id -Force
 
       - name: Upload artifact
