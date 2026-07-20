@@ -56,6 +56,28 @@ def _official_auth_details(auth_json):
     }
 
 
+def _gateway_auth_details(data):
+    if not isinstance(data, dict):
+        return {}
+    wrapped = {"tokens": {
+        "id_token": data.get("id_token"),
+        "access_token": data.get("access_token"),
+        "account_id": data.get("account_id"),
+    }}
+    details = _official_auth_details(wrapped)
+    details["email"] = details.get("email") or data.get("email") or ""
+    details["plan"] = details.get("plan") or str(data.get("plan") or data.get("plan_type") or "").capitalize()
+    return details
+
+
+def _credential_timestamp(path, data):
+    claims = _jwt_claims((data or {}).get("access_token"))
+    try:
+        return max(float(claims.get("iat") or 0), os.path.getmtime(path))
+    except OSError:
+        return float(claims.get("iat") or 0)
+
+
 def _codex_installed():
     if sys.platform == "darwin":
         return any(os.path.exists(path) for path in (
@@ -118,6 +140,16 @@ def _has_login():
     return bool(auth_json)
 
 
+def _gateway_auth_ready(data):
+    """A refreshable local credential is enough; live quota is irrelevant."""
+    if not isinstance(data, dict) or data.get("disabled"):
+        return False
+    access_token = data.get("access_token")
+    refresh_token = data.get("refresh_token")
+    id_token = data.get("id_token")
+    return bool(access_token and (refresh_token or id_token))
+
+
 def _third_party_count():
     try:
         import config_manager
@@ -133,24 +165,42 @@ def get_account_info():
     auth_json = _read_json(os.path.join(CODEX_HOME, "auth.json"))
     official = _official_auth_details(auth_json)
     best = {}
+    best_details = {}
+    best_timestamp = 0
     for path in files:
         data = _read_json(path)
-        if data and not data.get("disabled"):
-            best = data
-            best["_path"] = path
-            break
-    email = best.get("email") or official["email"]
+        if _gateway_auth_ready(data):
+            timestamp = _credential_timestamp(path, data)
+            if timestamp >= best_timestamp:
+                best = data
+                best["_path"] = path
+                best_details = _gateway_auth_details(data)
+                best_timestamp = timestamp
+    official_path = os.path.join(CODEX_HOME, "auth.json")
+    try:
+        official_timestamp = os.path.getmtime(official_path)
+    except OSError:
+        official_timestamp = 0
+    prefer_official = official_timestamp >= best_timestamp
+    email = ((official.get("email") if prefer_official else best_details.get("email"))
+             or best_details.get("email") or best.get("email") or official["email"])
     if not email and best.get("_path"):
         m = re.search(r"codex-(.*?)-(free|plus|pro|team|enterprise)\.json$", os.path.basename(best["_path"]), re.I)
         if m:
             email = m.group(1)
-    plan = ""
-    if best.get("_path"):
+    # JWT claims are authoritative. The filename is only a legacy fallback.
+    plan = ((official.get("plan") if prefer_official else best_details.get("plan"))
+            or best_details.get("plan") or official["plan"])
+    if not plan and best.get("_path"):
         m = re.search(r"-(free|plus|pro|team|enterprise)\.json$", os.path.basename(best["_path"]), re.I)
         if m:
             plan = m.group(1).capitalize()
     if not plan:
-        plan = best.get("plan") or best.get("plan_type") or official["plan"] or "未知"
+        plan = best.get("plan") or best.get("plan_type") or "未知"
+    refreshed_timestamp = max(best_timestamp, official_timestamp)
+    refreshed_at = "未知"
+    if refreshed_timestamp:
+        refreshed_at = datetime.datetime.fromtimestamp(refreshed_timestamp).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     logged_in = bool(best or auth_json)
     mode_key, mode = classify_mode(installed, logged_in)
     return {
@@ -159,12 +209,13 @@ def get_account_info():
         "gateway_logged_in": bool(best),
         "email": email or "未读取到",
         "plan": plan,
+        "refreshed_at": refreshed_at,
         # CLIProxyAPI's `expired` field is the short-lived access-token expiry,
         # not the ChatGPT subscription end date shown to the user.
-        "expired": official["subscription_until"] or best.get("subscription_until") or "未知",
+        "expired": official["subscription_until"] or best_details.get("subscription_until") or best.get("subscription_until") or "未知",
         "account_id": best.get("account_id") or official["account_id"] or "未知",
         "mode": mode,
         "mode_key": mode_key,
         "third_party_count": _third_party_count(),
-        "usage": "本地文件未提供套餐用量",
+        "usage": "官方未提供可供第三方应用读取的剩余额度接口；请在 Codex Usage 页面查看",
     }

@@ -484,15 +484,19 @@ def _import_desktop_codex_auth():
         return False, "导入官方登录凭据失败：{}".format(ex)
 
 
+def import_desktop_codex_auth():
+    return _import_desktop_codex_auth()
+
+
 def run_codex_login(device=False):
     ok, _ = runtime.ensure_all()
     if not ok:
         return False, "网关运行环境未准备完成。"
-    if IS_MACOS:
-        return _import_desktop_codex_auth()
     flag = "-codex-device-login" if device else "-codex-login"
     kwargs = {"cwd": INSTALL_DIR}
     if IS_WINDOWS:
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    else:
+        kwargs["start_new_session"] = True
     subprocess.Popen([EXE_PATH, "-config", CONFIG_PATH, flag], **kwargs)
     return True, "已启动 Codex 官方登录流程，请按浏览器提示完成授权。"

@@ -270,8 +270,16 @@ def collect_entries(cfg):
                 if not alias:
                     continue
                 has_key = bool(entry.get("api-key") or entry.get("api-key-entries"))
+                if section == "openai-compatibility":
+                    key_entries = entry.get("api-key-entries") or []
+                    api_key = str(key_entries[0].get("api-key") or "") if key_entries and isinstance(key_entries[0], dict) else ""
+                else:
+                    api_key = str(entry.get("api-key") or "")
+                serial_value = model.get("x-modeldock-serial")
+                order_value = model.get("x-modeldock-order")
                 result.append({
-                    "number": len(result) + 1,
+                    "number": int(serial_value if serial_value is not None else (len(result) + 1)),
+                    "order": int(order_value if order_value is not None else (len(result) + 1)),
                     "section": section,
                     "entry_index": ei,
                     "model_index": mi,
@@ -279,9 +287,160 @@ def collect_entries(cfg):
                     "upstream": str(model.get("name") or ""),
                     "base_url": str(entry.get("base-url") or ""),
                     "has_key": has_key,
+                    "api_key": api_key,
                     "built_in": alias in BUILTIN_ALIASES or entry.get("name") == BUILTIN_PROVIDER_ID,
                 })
     return result
+
+
+def _ensure_model_metadata(cfg):
+    """Assign immutable display numbers and independent sortable positions."""
+    changed = False
+    used = set()
+    next_serial = 1
+    for section in ("codex-api-key", "openai-compatibility", "claude-api-key"):
+        for entry in cfg.get(section) or []:
+            for model in (entry.get("models") or []) if isinstance(entry, dict) else []:
+                if not isinstance(model, dict):
+                    continue
+                built_in = _builtin_alias_like(model.get("alias")) or entry.get("name") == BUILTIN_PROVIDER_ID
+                serial = 0 if built_in else model.get("x-modeldock-serial")
+                try:
+                    serial = int(serial)
+                except (TypeError, ValueError):
+                    serial = None
+                if serial is None or (serial in used and serial != 0):
+                    while next_serial in used:
+                        next_serial += 1
+                    serial = next_serial
+                used.add(serial)
+                next_serial = max(next_serial, serial + 1)
+                if model.get("x-modeldock-serial") != serial:
+                    model["x-modeldock-serial"] = serial
+                    changed = True
+    entries = collect_entries(cfg)
+    ordered = sorted(entries, key=lambda x: (0 if x.get("built_in") else 1, x.get("order", 10**9), x["number"]))
+    for order, item in enumerate(ordered):
+        model = cfg[item["section"]][item["entry_index"]]["models"][item["model_index"]]
+        desired = 0 if item.get("built_in") else order
+        if model.get("x-modeldock-order") != desired:
+            model["x-modeldock-order"] = desired
+            changed = True
+    return changed
+
+
+def _coalesce_provider_entries(cfg):
+    """CLIProxyAPI de-duplicates repeated credentials; merge their model lists first."""
+    changed = False
+    for section in ("codex-api-key", "claude-api-key", "openai-compatibility"):
+        section_changed = False
+        entries = cfg.get(section) or []
+        kept = []
+        grouped = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                kept.append(entry)
+                continue
+            if section == "openai-compatibility":
+                credentials = json.dumps(entry.get("api-key-entries") or [], sort_keys=True)
+            else:
+                credentials = str(entry.get("api-key") or "")
+            signature = (str(entry.get("base-url") or "").rstrip("/"), credentials)
+            target = grouped.get(signature)
+            if target is None or not signature[0] or not credentials:
+                grouped[signature] = entry
+                kept.append(entry)
+                continue
+            aliases = {str(m.get("alias") or m.get("name") or "") for m in target.get("models") or [] if isinstance(m, dict)}
+            for model in entry.get("models") or []:
+                alias = str(model.get("alias") or model.get("name") or "") if isinstance(model, dict) else ""
+                if alias and alias not in aliases:
+                    target.setdefault("models", []).append(model)
+                    aliases.add(alias)
+            changed = True
+            section_changed = True
+        if section_changed:
+            cfg[section] = kept
+    return changed
+
+
+def _catalog_template(models):
+    return next((m for m in models if isinstance(m, dict) and m.get("slug") == "gpt-5.5"), None) or DEFAULT_MODEL_TEMPLATE
+
+
+def _reconcile_catalog(cfg, cat):
+    """Backfill imported config entries and keep catalog order identical to ModelDock."""
+    models = _models_list(cat)
+    original_models = copy.deepcopy(models)
+    by_slug = {str(m.get("slug")): m for m in models if isinstance(m, dict) and m.get("slug")}
+    desired = []
+    entries = sorted(collect_entries(cfg), key=lambda x: (x.get("order", 10**9), x["number"]))
+    for index, item in enumerate(entries):
+        model_cfg = cfg[item["section"]][item["entry_index"]]["models"][item["model_index"]]
+        cat_model = by_slug.pop(item["alias"], None)
+        if cat_model is None:
+            cat_model = copy.deepcopy(_catalog_template(models))
+        display = str(model_cfg.get("display-name") or cat_model.get("display_name") or item["alias"]).strip()
+        provider = str(cat_model.get("description") or "").strip()
+        if not provider:
+            provider_entry = cfg[item["section"]][item["entry_index"]]
+            provider = str(provider_entry.get("name") or "Custom")
+        configured_context = model_cfg.get("x-modeldock-context-window")
+        if configured_context and not cat_model.get("context_window"):
+            cat_model["context_window"] = int(configured_context)
+            cat_model["max_context_window"] = int(configured_context)
+            cat_model["effective_context_window_percent"] = 95
+        cat_model.update({
+            "slug": item["alias"], "display_name": display, "name": display,
+            "description": provider, "visibility": "list", "supported_in_api": True,
+            "priority": index, "availability_nux": None, "upgrade": None,
+            "additional_speed_tiers": [], "service_tiers": [],
+        })
+        if item.get("built_in"):
+            cat_model["x_gateway_builtin"] = True
+            cat_model["description"] = BUILTIN_PROVIDER_NAME
+            cat_model["context_window"] = BUILTIN_CONTEXT_WINDOW
+            cat_model["max_context_window"] = BUILTIN_CONTEXT_WINDOW
+            cat_model["effective_context_window_percent"] = 95
+        desired.append(cat_model)
+    # Keep unrelated catalog entries, but always after configured gateway models.
+    desired.extend(by_slug.values())
+    if original_models != desired:
+        models[:] = desired
+        return True
+    return False
+
+
+def _backfill_model_metadata(cfg, cat):
+    changed = False
+    for item in collect_entries(cfg):
+        model_cfg = cfg[item["section"]][item["entry_index"]]["models"][item["model_index"]]
+        cat_model = get_catalog_model(cat, item["alias"])
+        context = cat_model.get("context_window")
+        if context and model_cfg.get("x-modeldock-context-window") != int(context):
+            model_cfg["x-modeldock-context-window"] = int(context)
+            changed = True
+        display = str(cat_model.get("display_name") or item["alias"])
+        if model_cfg.get("display-name") != display:
+            model_cfg["display-name"] = display
+            changed = True
+    return changed
+
+
+def synchronize_models():
+    cfg = load_config()
+    cat = load_catalog()
+    changed_cfg = _coalesce_provider_entries(cfg)
+    changed_cfg = _ensure_model_metadata(cfg) or changed_cfg
+    changed_cat = _reconcile_catalog(cfg, cat)
+    changed_cfg = _backfill_model_metadata(cfg, cat) or changed_cfg
+    if changed_cfg:
+        save_config(cfg)
+    if changed_cat:
+        save_catalog(cat)
+    if changed_cfg or changed_cat:
+        invalidate_codex_model_cache()
+    return changed_cfg or changed_cat
 
 def get_catalog_model(catalog, alias):
     models = catalog.get("models") if isinstance(catalog, dict) else catalog
@@ -293,22 +452,19 @@ def get_catalog_model(catalog, alias):
 def get_summary():
     ensure_base_files()
     ensure_builtin_model()
+    synchronize_models()
     ensure_catalog_display_names()
     cfg = load_config()
     cat = load_catalog()
     entries = collect_entries(cfg)
-    display_number = 1
     for item in entries:
         m = get_catalog_model(cat, item["alias"])
+        configured_model = cfg[item["section"]][item["entry_index"]]["models"][item["model_index"]]
         item["display_name"] = m.get("display_name", item["alias"])
         item["provider_name"] = m.get("description", "")
-        item["context_window"] = m.get("context_window")
+        item["context_window"] = m.get("context_window") or configured_model.get("x-modeldock-context-window")
         item["max_output_tokens"] = get_max_output(cfg, item["alias"])
-        if item.get("built_in"):
-            item["display_number"] = 0
-        else:
-            item["display_number"] = display_number
-            display_number += 1
+        item["display_number"] = item["number"]
     return {
         "entries": entries,
         "host": cfg.get("host") or "127.0.0.1",
@@ -381,7 +537,9 @@ def add_model(api_type, provider_name, base_url, api_key,
                    "claude": "claude-api-key"}
     section = section_map[api_type]
 
-    existing = [x for x in collect_entries(cfg) if x["alias"] == alias]
+    _ensure_model_metadata(cfg)
+    all_entries = collect_entries(cfg)
+    existing = [x for x in all_entries if x["alias"] == alias]
     if existing and not replace:
         raise ValueError(f"模型 alias {alias} 已存在。")
     if existing:
@@ -395,18 +553,24 @@ def add_model(api_type, provider_name, base_url, api_key,
     if not provider_id:
         provider_id = "custom"
 
+    next_serial = max([int(x["number"]) for x in all_entries if not x.get("built_in")] + [0]) + 1
+    next_order = max([int(x.get("order", 0)) for x in all_entries] + [0]) + 1
+    model_record = {"name": model_id, "alias": alias, "display-name": display_name,
+                    "x-modeldock-serial": next_serial, "x-modeldock-order": next_order}
+    if context_window:
+        model_record["x-modeldock-context-window"] = int(context_window)
     if section == "openai-compatibility":
         entry = {
             "name": provider_id,
             "base-url": base_url.rstrip("/"),
             "api-key-entries": [{"api-key": api_key}],
-            "models": [{"name": model_id, "alias": alias}],
+            "models": [model_record],
         }
     else:
         entry = {
             "api-key": api_key,
             "base-url": base_url.rstrip("/"),
-            "models": [{"name": model_id, "alias": alias}],
+            "models": [model_record],
         }
     cfg.setdefault(section, []).append(entry)
 
@@ -419,7 +583,7 @@ def add_model(api_type, provider_name, base_url, api_key,
     new_model["description"] = provider_name
     new_model["visibility"] = "list"
     new_model["supported_in_api"] = True
-    new_model["priority"] = max([int(m.get("priority", 0)) for m in models] + [999]) + 1
+    new_model["priority"] = next_order
     new_model["additional_speed_tiers"] = []
     new_model["service_tiers"] = []
     new_model["availability_nux"] = None
@@ -432,13 +596,14 @@ def add_model(api_type, provider_name, base_url, api_key,
         new_model.pop("context_window", None)
         new_model.pop("max_context_window", None)
     models[:] = [m for m in models if m.get("slug") != alias]
-    models.insert(0, new_model)
+    models.append(new_model)
 
     if max_output_tokens is not None:
         set_max_output(cfg, alias, max_output_tokens)
 
     save_config(cfg)
     save_catalog(cat)
+    synchronize_models()
     invalidate_codex_model_cache()
     return alias
 
@@ -449,9 +614,6 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
     cat = load_catalog()
     models = _models_list(cat)
     entries = collect_entries(cfg)
-
-    for idx, item in enumerate(entries):
-        item["number"] = idx + 1
 
     target = next((x for x in entries if x["number"] == number), None)
     if not target:
@@ -480,6 +642,8 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
         model["alias"] = new_alias
     else:
         model["alias"] = old_alias
+    if display_name:
+        model["display-name"] = display_name
 
     by_slug = {m.get("slug"): m for m in models if isinstance(m, dict)}
     cat_model = by_slug.get(old_alias)
@@ -504,10 +668,12 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
 
     if context_window is not None:
         if context_window:
+            model["x-modeldock-context-window"] = int(context_window)
             cat_model["context_window"] = int(context_window)
             cat_model["max_context_window"] = int(context_window)
             cat_model["effective_context_window_percent"] = 95
         else:
+            model.pop("x-modeldock-context-window", None)
             cat_model.pop("context_window", None)
             cat_model.pop("max_context_window", None)
 
@@ -517,6 +683,7 @@ def modify_model(number, base_url=None, api_key=None, upstream=None,
 
     save_config(cfg)
     save_catalog(cat)
+    synchronize_models()
     invalidate_codex_model_cache()
     return new_alias
 
@@ -525,9 +692,6 @@ def remove_model(number):
     cat = load_catalog()
     models = _models_list(cat)
     entries = collect_entries(cfg)
-
-    for idx, item in enumerate(entries):
-        item["number"] = idx + 1
 
     target = next((x for x in entries if x["number"] == number), None)
     if not target:
@@ -544,8 +708,29 @@ def remove_model(number):
     set_max_output(cfg, alias, None)
     save_config(cfg)
     save_catalog(cat)
+    synchronize_models()
     invalidate_codex_model_cache()
     return alias
+
+
+def move_model(number, direction):
+    cfg = load_config()
+    _ensure_model_metadata(cfg)
+    entries = sorted([x for x in collect_entries(cfg) if not x.get("built_in")],
+                     key=lambda x: (x.get("order", 10**9), x["number"]))
+    index = next((i for i, x in enumerate(entries) if x["number"] == number), None)
+    if index is None:
+        raise ValueError("未找到指定编号。")
+    other = index + (-1 if direction < 0 else 1)
+    if other < 0 or other >= len(entries):
+        return False
+    first, second = entries[index], entries[other]
+    a = cfg[first["section"]][first["entry_index"]]["models"][first["model_index"]]
+    b = cfg[second["section"]][second["entry_index"]]["models"][second["model_index"]]
+    a["x-modeldock-order"], b["x-modeldock-order"] = b["x-modeldock-order"], a["x-modeldock-order"]
+    save_config(cfg)
+    synchronize_models()
+    return True
 
 def get_redacted_config():
     import copy
@@ -599,6 +784,9 @@ def ensure_builtin_model():
         "name": BUILTIN_MODEL_ID,
         "alias": BUILTIN_DISPLAY_NAME,
         "display-name": BUILTIN_DISPLAY_NAME,
+        "x-modeldock-serial": 0,
+        "x-modeldock-order": 0,
+        "x-modeldock-context-window": BUILTIN_CONTEXT_WINDOW,
     }
     if entry.get("models") != [canonical_model]:
         # This provider is intentionally immutable, so any extra model here is

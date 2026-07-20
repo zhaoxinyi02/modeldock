@@ -1,5 +1,5 @@
 APP_NAME = "ModelDock"
-APP_VERSION = "V2026.07.15k"
+APP_VERSION = "V2026.07.20b"
 GITHUB_OWNER = "zhaoxinyi02"
 GITHUB_REPO = "modeldock"
 

@@ -22,7 +22,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install pyyaml pyinstaller
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --yes --no-progress }
 
       - name: Download CLIProxyAPI runtime
         shell: pwsh
@@ -48,25 +58,21 @@ jobs:
           $escaped = $env:BUILTIN_GLM_API_KEY.Replace('\', '\\').Replace('"', '\"')
           Set-Content -LiteralPath src/secrets_runtime.py -Encoding UTF8 -Value "BUILTIN_GLM_API_KEY = `"$escaped`""
 
-      - name: Build executable
+      - name: Build WinUI application and installer
+        shell: pwsh
         run: |
-          pyinstaller build.spec --noconfirm
-
-      - name: Rename with version
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME:-manual}"
-          cp dist/ModelDock.exe "dist/ModelDock_${VERSION}.exe"
+          $version = python -c "import sys; sys.path.insert(0,'src'); from constants import APP_VERSION; print(APP_VERSION)"
+          .\scripts\build_windows_native.ps1 -VersionTag $version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ModelDock-Windows-x64
-          path: dist/ModelDock_V*.exe
+          path: dist/ModelDock_V*_Windows_x64_Setup.exe
 
   build-macos:
     name: macOS Apple Silicon
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -115,7 +121,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.exe
+            dist/*_Windows_x64_Setup.exe
             dist/*.dmg
           generate_release_notes: true
         env:

@@ -80,10 +80,12 @@ def ensure_all():
         ensure_builtin_model,
         expose_display_names_to_codex,
         invalidate_codex_model_cache,
+        synchronize_models,
     )
     ensure_base_files()
     ensure_builtin_model()
     expose_display_names_to_codex()
+    synchronize_models()
     # The desktop client caches rich model metadata separately from the
     # gateway.  Clearing this disposable file makes display-name fixes and a
     # bundled CLIProxyAPI upgrade visible on the next Codex restart.

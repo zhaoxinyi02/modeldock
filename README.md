@@ -7,7 +7,7 @@ ModelDock（模型停靠站）是一个 Windows/macOS 桌面工具，用来把 C
 ## 功能
 
 - 一体化运行时：安装包内包含对应平台的 CLIProxyAPI，首次启动自动释放到本机应用数据目录。
-- 现代桌面 UI：基于 PySide6/Qt 重写，带窗口图标、应用 logo、托盘常驻。
+- 双原生桌面 UI：Windows 使用 WinUI 3 + Mica，macOS 使用 SwiftUI + Liquid Glass；模型和网关逻辑共用同一套 Python 后端。
 - 接管保护：发现已有非本软件托管的 CLIProxyAPI 正在运行时，必须选择接管并继承配置，或退出软件。
 - Codex 控制：首页检测 Codex Desktop 是否运行，并提供打开、停止、重启按钮。
 - 网关控制：首页查看本地网关状态、PID、地址和当前可用模型。
@@ -25,7 +25,7 @@ ModelDock（模型停靠站）是一个 Windows/macOS 桌面工具，用来把 C
 
 前往 [Releases](https://github.com/zhaoxinyi02/modeldock/releases) 下载最新版：
 
-- Windows：`ModelDock_VYYYY.MM.DD.exe`
+- Windows：`ModelDock_VYYYY.MM.DD_Windows_x64_Setup.exe`
 - Apple Silicon Mac：`ModelDock_VYYYY.MM.DD_macOS_arm64.dmg`
 
 如果同一天发布多个版本，会使用 `VYYYY.MM.DDa`、`VYYYY.MM.DDb` 这样的后缀。
@@ -33,7 +33,7 @@ ModelDock（模型停靠站）是一个 Windows/macOS 桌面工具，用来把 C
 ## 使用
 
 1. 安装或下载 Codex Desktop。
-2. Windows 打开 `ModelDock.exe`；macOS 打开 DMG，把 `ModelDock.app` 拖到“应用程序”后运行。
+2. Windows 运行 Setup 安装包；macOS 打开 DMG，把 `ModelDock.app` 拖到“应用程序”后运行。
 3. 在首页启动本地网关，必要时点击“打开 Codex”。
 4. 在设置页选择一种模式：
    - “官方登录”：使用 CLIProxyAPI 启动 Codex 官方 OAuth 登录。
@@ -52,11 +52,13 @@ ModelDock（模型停靠站）是一个 Windows/macOS 桌面工具，用来把 C
 
 ## 构建
 
-本项目使用 Python、PySide6/Qt 和 PyInstaller。
+项目采用双原生前端和共享后端：Windows 为 C#/WinUI 3，macOS 为 Swift/SwiftUI，Python 后端通过本地 JSON 命令桥接复用模型、账号、网关与回退逻辑。
+
+Windows（需要 .NET 8 SDK、Windows App SDK 构建工具和 Inno Setup 6）：
 
 ```powershell
-pip install -r requirements.txt
-pyinstaller build.spec --noconfirm
+pip install pyyaml pyinstaller
+.\scripts\build_windows_native.ps1
 ```
 
 macOS（脚本会自动下载当前 CPU 架构的 CLIProxyAPI、生成 `.app` 和 `.dmg`）：

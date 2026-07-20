@@ -9,14 +9,14 @@ try:
 except ImportError:
     winreg = None
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPixmap
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, QSettings
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPixmap, QPainter, QPainterPath, QPen, QPalette
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QProgressDialog, QPushButton, QPlainTextEdit, QStackedWidget, QSystemTrayIcon, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QListWidget,
-    QListWidgetItem, QInputDialog
+    QListWidgetItem, QInputDialog, QToolButton, QStyleFactory, QDialogButtonBox
 )
 
 from constants import *
@@ -90,6 +90,27 @@ def tray_icon():
     return icon
 
 
+def eye_icon(hidden=False):
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    color = QApplication.palette().color(QPalette.Text)
+    pen = QPen(color, 1.5)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    path = QPainterPath()
+    path.moveTo(1.5, 9)
+    path.cubicTo(4.5, 3.5, 13.5, 3.5, 16.5, 9)
+    path.cubicTo(13.5, 14.5, 4.5, 14.5, 1.5, 9)
+    painter.drawPath(path)
+    painter.drawEllipse(6.7, 6.7, 4.6, 4.6)
+    if hidden:
+        painter.drawLine(3, 3, 15, 15)
+    painter.end()
+    return QIcon(pixmap)
+
+
 LIGHT_QSS = """
 QMainWindow { background: #f8f9fb; }
 QWidget { font-family: "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei UI"; font-size: 13px; color: #202124; }
@@ -118,6 +139,10 @@ QPushButton#ModeActive:disabled { background: #e8f0fe; color: #0b57d0; border-co
 QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {
   background: #ffffff; border: 1px solid #d6dee8; border-radius: 9px; padding: 8px;
 }
+QComboBox { min-height: 20px; padding-right: 32px; }
+QComboBox QAbstractItemView { padding: 5px; border: 1px solid #d6dee8; border-radius: 8px; selection-background-color: #e8f0fe; }
+QToolButton { background: transparent; border: 0; border-radius: 6px; padding: 5px 8px; color: #5f6368; }
+QToolButton:hover { background: #eef2f7; }
 QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {
   border: 1px solid #60a5fa;
 }
@@ -157,6 +182,28 @@ QListWidget::item:hover { background: #202328; }
 QListWidget::item:selected { background: #263b61; color: #a8c7fa; }
 QProgressDialog { background: #1b1e22; border-color: #30343a; }
 QProgressBar { background: #292d32; border-color: #3a3e44; }
+"""
+
+# On macOS, leave buttons, text fields, combo boxes, menus and scroll bars to
+# QMacStyle/AppKit.  Only product structure and typography are customized.
+MACOS_QSS = """
+QWidget { font-family: ".AppleSystemUIFont", "SF Pro Text", "PingFang SC"; font-size: 13px; }
+QLabel#Title { font-size: 26px; font-weight: 700; }
+QLabel#Subtitle, QLabel#Metric { color: palette(mid); font-size: 12px; }
+QLabel#CardTitle { font-size: 14px; font-weight: 600; }
+QLabel#Value { font-size: 20px; font-weight: 600; }
+QLabel#Pill { color: palette(highlighted-text); background: palette(highlight); border-radius: 8px; padding: 5px 9px; font-weight: 600; }
+QWidget#Card, QWidget#HeroCard { background: palette(base); border: 1px solid palette(midlight); border-radius: 10px; }
+QLabel#HeroTitle { font-size: 21px; font-weight: 650; }
+QLabel#HeroText { color: palette(mid); }
+QPushButton#Danger { color: #d70015; }
+QPushButton#ModeActive { font-weight: 650; }
+QTableWidget { border: 1px solid palette(midlight); border-radius: 8px; gridline-color: palette(midlight); }
+QHeaderView::section { padding: 7px; font-weight: 600; }
+QListWidget { border: 0; border-right: 1px solid palette(midlight); padding: 14px 10px; font-size: 14px; }
+QListWidget::item { padding: 10px 12px; border-radius: 7px; margin: 2px 0; }
+QListWidget::item:selected { background: palette(highlight); color: palette(highlighted-text); }
+QToolButton { border: 0; padding: 4px 7px; }
 """
 
 
@@ -213,7 +260,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME + " " + APP_VERSION)
         self.setWindowIcon(app_icon())
-        self.resize(1120, 720)
+        self.resize(1280, 800)
+        self.setMinimumSize(1080, 680)
+        saved_geometry = QSettings(APP_NAME, APP_NAME).value("mainWindowGeometry")
+        if saved_geometry:
+            self.restoreGeometry(saved_geometry)
+            if self.width() < 1280 or self.height() < 800:
+                self.resize(max(1280, self.width()), max(800, self.height()))
         self._allow_exit = False
         self._task_signals = []
         self._busy_dialog = None
@@ -235,7 +288,7 @@ class MainWindow(QMainWindow):
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
         self.nav = QListWidget()
-        self.nav.setFixedWidth(220)
+        self.nav.setFixedWidth(190 if IS_MACOS else 220)
         for text in ("首页", "配置管理", "回退点", "设置"):
             QListWidgetItem(text, self.nav)
         self.nav.setCurrentRow(0)
@@ -254,7 +307,7 @@ class MainWindow(QMainWindow):
         if not force and dark == self._dark_mode:
             return
         self._dark_mode = dark
-        QApplication.instance().setStyleSheet(DARK_QSS if dark else LIGHT_QSS)
+        QApplication.instance().setStyleSheet(MACOS_QSS if IS_MACOS else (DARK_QSS if dark else LIGHT_QSS))
         icon = app_icon(dark)
         self.setWindowIcon(icon)
         if hasattr(self, "tray"):
@@ -333,19 +386,26 @@ class MainWindow(QMainWindow):
 
     def _config_page(self):
         page, layout = self._page("配置管理", "内置模型固定为 0 号，用户模型从 1 开始")
-        self.config_table = QTableWidget(0, 10)
-        self.config_table.setHorizontalHeaderLabels(["序号", "展示名称", "模型ID", "上游模型", "供应商", "类型", "URL", "上下文", "最大输出", "标记"])
-        self.config_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.config_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        self.config_table = QTableWidget(0, 7)
+        self.config_table.setHorizontalHeaderLabels(["序号", "名称", "上游模型", "类型", "URL", "上下文", "最大输出"])
+        self.config_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.config_table.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
         self.config_table.verticalHeader().setVisible(False)
         self.config_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.config_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.config_table.setAlternatingRowColors(True)
+        self.config_table.setTextElideMode(Qt.ElideMiddle)
+        self.config_table.cellDoubleClicked.connect(lambda _row, _column: self._modify_model())
+        for column, width in {0: 48, 1: 180, 2: 145, 3: 135, 4: 280, 5: 95, 6: 95}.items():
+            self.config_table.setColumnWidth(column, width)
         layout.addWidget(self.config_table, 1)
         btns = QHBoxLayout()
         for text, fn, obj in [
             ("刷新", self.refresh_config, "Secondary"),
             ("添加模型", self._add_model, ""),
             ("修改", self._modify_model, "Secondary"),
+            ("上移", lambda: self._move_model(-1), "Secondary"),
+            ("下移", lambda: self._move_model(1), "Secondary"),
             ("删除", self._remove_model, "Danger"),
             ("查看脱敏配置", self._view_config, "Secondary"),
         ]:
@@ -392,6 +452,10 @@ class MainWindow(QMainWindow):
         login_btn.setObjectName("Secondary")
         login_btn.clicked.connect(self._codex_login)
         status.layout.addWidget(login_btn)
+        usage_btn = QPushButton("打开官方 Usage 页面")
+        usage_btn.setObjectName("Secondary")
+        usage_btn.clicked.connect(lambda: webbrowser.open("https://chatgpt.com/codex/settings/usage"))
+        status.layout.addWidget(usage_btn)
         mode_btns = QHBoxLayout()
         self.mode_buttons = {}
         for key, text, fn in [
@@ -458,6 +522,9 @@ class MainWindow(QMainWindow):
         return page
 
     def _remove_focus_frames(self):
+        if IS_MACOS:
+            # Preserve AppKit keyboard focus and VoiceOver/accessibility on Mac.
+            return
         for button in self.findChildren(QPushButton):
             button.setFocusPolicy(Qt.NoFocus)
         for table in self.findChildren(QTableWidget):
@@ -543,7 +610,8 @@ class MainWindow(QMainWindow):
         self.mode_hero.text.setText(desc_map.get(ai["mode_key"], "当前模式需要检查 Codex 配置。"))
         self.account_status.setText(
             "<b>邮箱</b>：{email}<br>"
-            "<b>套餐</b>：{plan}<br>"
+            "<b>套餐</b>：{plan}（本机最新凭据返回）<br>"
+            "<b>状态更新时间</b>：{refreshed_at}<br>"
             "<b>订阅有效期至</b>：{expired}<br>"
             "<b>网关订阅凭据</b>：{gateway_auth}<br>"
             "<b>第三方模型</b>：{third_party_count}<br>"
@@ -556,23 +624,32 @@ class MainWindow(QMainWindow):
     def refresh_config(self):
         try:
             summary = config_manager.get_summary()
-            entries = sorted(summary["entries"], key=lambda x: (x.get("display_number", x["number"]), x["alias"]))
+            entries = sorted(summary["entries"], key=lambda x: (x.get("order", 10**9), x["number"]))
             self.config_table.setRowCount(len(entries))
             self._entry_by_row = {}
             for row, e in enumerate(entries):
                 vals = [
-                    e.get("display_number", e["number"]), e["display_name"], e["alias"], e["upstream"],
-                    e["provider_name"], e["section"], e["base_url"], e.get("context_window") or "-",
-                    e.get("max_output_tokens") or "-", "内置" if e.get("built_in") else "",
+                    e.get("display_number", e["number"]), e["display_name"], e["upstream"],
+                    self._type_label(e["section"]), e["base_url"], e.get("context_window") or "-",
+                    e.get("max_output_tokens") or "-",
                 ]
                 for col, val in enumerate(vals):
                     item = QTableWidgetItem(str(val))
                     if e.get("built_in"):
                         item.setForeground(Qt.darkGray)
+                    item.setToolTip(str(val))
                     self.config_table.setItem(row, col, item)
                 self._entry_by_row[row] = e
         except Exception as ex:
             self._error(str(ex))
+
+    @staticmethod
+    def _type_label(section):
+        return {
+            "codex-api-key": "OpenAI Responses",
+            "openai-compatibility": "OpenAI 兼容",
+            "claude-api-key": "Anthropic 兼容",
+        }.get(section, section)
 
     def refresh_restore_points(self):
         points = restore_manager.list_restore_points()
@@ -635,7 +712,8 @@ class MainWindow(QMainWindow):
     def _add_model(self):
         dlg = ModelDialog(self)
         if dlg.exec() == QDialog.Accepted:
-            r = dlg.result
+            r = dict(dlg.result)
+            dlg.deleteLater()
             def work():
                 config_manager.add_model(**r)
                 return self._after_config_change("add-model")
@@ -651,8 +729,10 @@ class MainWindow(QMainWindow):
             return
         dlg = ModelDialog(self, e)
         if dlg.exec() == QDialog.Accepted:
+            result = dict(dlg.result)
+            dlg.deleteLater()
             def work():
-                config_manager.modify_model(e["number"], **dlg.result)
+                config_manager.modify_model(e["number"], **result)
                 return self._after_config_change("modify-model")
             self._run_task("正在修改模型并重启网关", work, lambda ok: self._config_done(ok, "模型已修改。"))
 
@@ -669,6 +749,24 @@ class MainWindow(QMainWindow):
                 config_manager.remove_model(e["number"])
                 return self._after_config_change("remove-model")
             self._run_task("正在删除模型并重启网关", work, lambda ok: self._config_done(ok, "模型已删除。"))
+
+    def _move_model(self, direction):
+        e = self.selected_entry()
+        if not e:
+            self._warn("请先选择一个模型。")
+            return
+        if e.get("built_in"):
+            self._warn("内置免费模型固定在最上方。")
+            return
+        if not config_manager.move_model(e["number"], direction):
+            return
+        self.refresh_config()
+        for row, item in self._entry_by_row.items():
+            if item["number"] == e["number"]:
+                self.config_table.selectRow(row)
+                break
+        if account_info.get_account_info()["mode_key"] != "pure_official":
+            config_manager.invalidate_codex_model_cache()
 
     def _view_config(self):
         dlg = TextDialog("脱敏后的 config.yaml", config_manager.get_redacted_config(), self)
@@ -712,21 +810,33 @@ class MainWindow(QMainWindow):
             config_switched = False
             try:
                 config_manager.expose_display_names_to_codex()
+                credential_message = ""
+                if requires_auth:
+                    auth = account_info.get_account_info()
+                    if not auth.get("gateway_logged_in") and IS_MACOS:
+                        imported, import_message = gateway.import_desktop_codex_auth()
+                        if imported:
+                            auth = account_info.get_account_info()
+                            credential_message = import_message
+                    if not auth.get("gateway_logged_in"):
+                        return False, (
+                            "未找到可供本地网关使用的官方订阅凭据。"
+                            "请先点击“登录/刷新网关官方订阅凭据”，完成后再切换。"
+                        )
                 gateway_ok = gateway.start()
                 if not gateway_ok:
                     return False, "网关未能启动，未切换 Codex 配置。"
-                probe_message = ""
-                if requires_auth:
-                    probe_ok, probe_message = gateway.probe_official_subscription()
-                    if not probe_ok:
-                        gateway.stop()
-                        return False, probe_message + " 未切换模式，已保留原有纯官方配置。"
                 migration = conversation_guard.migrate_desktop_conversations("cliproxyapi")
                 ok, msg = codex_repair.repair_codex_config(requires_auth)
                 if ok:
                     config_switched = True
                     restore_manager.create_restore_point("auto", "codex-mode-switch", "切换登录模式后自动保存")
-                    suffix = " " + probe_message if requires_auth else ""
+                    if requires_auth:
+                        suffix = " 已检测到可刷新官方凭据；实时额度、限流和模型可用性不影响模式切换。"
+                        if credential_message:
+                            suffix += " " + credential_message
+                    else:
+                        suffix = ""
                     return True, msg + " 网关已启动。已同步迁移 {} 条桌面会话。".format(migration["sessions_seen"]) + suffix
                 if migration:
                     conversation_guard.restore_provider_snapshot(migration["snapshot"])
@@ -932,6 +1042,8 @@ class MainWindow(QMainWindow):
     def _config_done(self, ok, message):
         self.refresh_all()
         if ok:
+            if account_info.get_account_info()["mode_key"] == "pure_official":
+                message += " 当前是纯官方模式；切换到“官方订阅 + 第三方 API”或“纯 API + 第三方模型”后，Codex 才会显示这些模型。"
             self._info(message)
         else:
             self._error("操作已执行，但网关未正常响应。配置已保留，请检查端口、API 地址或模型配置。")
@@ -980,6 +1092,7 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def closeEvent(self, event: QCloseEvent):
+        QSettings(APP_NAME, APP_NAME).setValue("mainWindowGeometry", self.saveGeometry())
         if self._allow_exit:
             event.accept()
             return
@@ -998,45 +1111,67 @@ class ModelDialog(QDialog):
         self.result = None
         self.entry = entry or {}
         self.setWindowTitle("模型配置")
-        self.resize(560, 430)
+        self.resize(760, 400)
+        self.setMinimumSize(720, 380)
         form = QFormLayout(self)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.api_type = QComboBox()
-        self.api_type.addItems(["responses", "openai", "claude"])
+        for label, value in (
+            ("OpenAI Responses", "responses"),
+            ("OpenAI 兼容", "openai"),
+            ("Anthropic 兼容", "claude"),
+        ):
+            self.api_type.addItem(label, value)
+        if self.entry:
+            section_type = {"codex-api-key": "responses", "openai-compatibility": "openai", "claude-api-key": "claude"}
+            target_type = section_type.get(self.entry.get("section"), "responses")
+            self.api_type.setCurrentIndex(max(0, self.api_type.findData(target_type)))
+            self.api_type.setEnabled(False)
         self.base_url = QLineEdit(self.entry.get("base_url", ""))
-        self.api_key = QLineEdit()
+        self.api_key = QLineEdit(self.entry.get("api_key", ""))
         self.api_key.setEchoMode(QLineEdit.Password)
         self.model_id = QComboBox()
         self.model_id.setEditable(True)
         self.model_id.setEditText(self.entry.get("upstream", ""))
-        self.alias = QLineEdit(self.entry.get("alias", ""))
-        self.display_name = QLineEdit(self.entry.get("display_name", ""))
+        self.name = QLineEdit(self.entry.get("display_name", self.entry.get("alias", "")))
         self.provider_name = QLineEdit(self.entry.get("provider_name", ""))
         self.ctx = QLineEdit(str(self.entry.get("context_window") or ""))
         self.maxout = QLineEdit(str(self.entry.get("max_output_tokens") or ""))
         form.addRow("接口类型", self.api_type)
         form.addRow("API Base URL", self.base_url)
-        form.addRow("API Key", self.api_key)
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.api_key, 1)
+        self.key_toggle = QToolButton()
+        self.key_toggle.setIcon(eye_icon(False))
+        self.key_toggle.setToolTip("显示 API Key")
+        self.key_toggle.setCheckable(True)
+        self.key_toggle.toggled.connect(self._toggle_key)
+        key_row.addWidget(self.key_toggle)
+        form.addRow("API Key", key_row)
         row = QHBoxLayout()
         row.addWidget(self.model_id, 1)
         fetch = QPushButton("获取模型列表")
         fetch.clicked.connect(self._fetch_models)
         row.addWidget(fetch)
         form.addRow("上游模型 ID", row)
-        form.addRow("Codex 模型 ID（下拉列表回退名）", self.alias)
-        form.addRow("展示名称", self.display_name)
+        form.addRow("名称", self.name)
         form.addRow("供应商名称", self.provider_name)
         form.addRow("上下文 token", self.ctx)
         form.addRow("最大输出 token", self.maxout)
-        btns = QHBoxLayout()
-        ok = QPushButton("确定")
-        cancel = QPushButton("取消")
-        cancel.setObjectName("Secondary")
-        ok.clicked.connect(self._ok)
-        cancel.clicked.connect(self.reject)
-        btns.addStretch(1)
-        btns.addWidget(ok)
-        btns.addWidget(cancel)
-        form.addRow(btns)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self._ok)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _toggle_key(self, visible):
+        self.api_key.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        self.key_toggle.setIcon(eye_icon(visible))
+        self.key_toggle.setToolTip("隐藏 API Key" if visible else "显示 API Key")
 
     def _model_list_candidates(self, base, api_type):
         from urllib.parse import urlparse
@@ -1061,7 +1196,7 @@ class ModelDialog(QDialog):
         if not base or not key:
             QMessageBox.warning(self, "提示", "请先填写 URL 和 API Key。")
             return
-        api_type = self.api_type.currentText()
+        api_type = self.api_type.currentData()
         headers = {"User-Agent": APP_NAME}
         if api_type == "claude":
             headers["x-api-key"] = key
@@ -1093,6 +1228,7 @@ class ModelDialog(QDialog):
 
     def _ok(self):
         model_id = self.model_id.currentText().strip()
+        name = self.name.text().strip() or model_id
         if not self.entry and (not self.base_url.text().strip() or not self.api_key.text().strip() or not model_id):
             QMessageBox.warning(self, "提示", "URL、Key、模型 ID 不能为空。")
             return
@@ -1101,21 +1237,21 @@ class ModelDialog(QDialog):
                 "base_url": self.base_url.text().strip(),
                 "api_key": self.api_key.text().strip() or None,
                 "upstream": model_id,
-                "alias": self.alias.text().strip() or model_id,
-                "display_name": self.display_name.text().strip() or model_id,
+                "alias": name,
+                "display_name": name,
                 "provider_name": self.provider_name.text().strip() or "Custom",
                 "context_window": self._int_or_none(self.ctx.text()),
                 "max_output_tokens": self._int_or_none(self.maxout.text()),
             }
         else:
             self.result = {
-                "api_type": self.api_type.currentText(),
+                "api_type": self.api_type.currentData(),
                 "provider_name": self.provider_name.text().strip() or "Custom",
                 "base_url": self.base_url.text().strip(),
                 "api_key": self.api_key.text().strip(),
                 "model_id": model_id,
-                "alias": self.alias.text().strip() or model_id,
-                "display_name": self.display_name.text().strip() or model_id,
+                "alias": name,
+                "display_name": name,
                 "context_window": self._int_or_none(self.ctx.text()),
                 "max_output_tokens": self._int_or_none(self.maxout.text()),
             }
@@ -1169,9 +1305,11 @@ def _takeover_if_needed():
 
 def run():
     app = QApplication([])
+    if IS_MACOS and "macOS" in QStyleFactory.keys():
+        app.setStyle(QStyleFactory.create("macOS"))
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(app_icon())
-    app.setStyleSheet(DARK_QSS if system_dark_mode() else LIGHT_QSS)
+    app.setStyleSheet(MACOS_QSS if IS_MACOS else (DARK_QSS if system_dark_mode() else LIGHT_QSS))
     if not _takeover_if_needed():
         return
     w = MainWindow()
