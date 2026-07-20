@@ -78,7 +78,7 @@ jobs:
           $json = $backendOutput | ConvertFrom-Json
           Write-Host "Backend smoke version: $($json.result.version); expected: $version; ok: $($json.ok)"
           if ($json.ok -ne $true -or [string]$json.result.version -ne [string]$version) { throw "Backend snapshot smoke test failed." }
-          $app = Start-Process -FilePath (Join-Path $install "ModelDock.exe") -PassThru
+          $app = Start-Process -FilePath (Join-Path $install "ModelDock.exe") -WorkingDirectory $install -PassThru
           Start-Sleep -Seconds 8
           if ($app.HasExited) {
             $startupLog = Join-Path $env:TEMP "ModelDock-startup-error.txt"
