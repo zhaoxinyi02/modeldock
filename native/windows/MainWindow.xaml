@@ -122,15 +122,15 @@
                             </Grid>
                             <ListView x:Name="ModelsList" Grid.Row="1" SelectionMode="Single" DoubleTapped="ModelsList_DoubleTapped">
                                 <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="local:ModelEntry">
+                                    <DataTemplate>
                                         <Grid Padding="8,9" ColumnDefinitions="48,1.25*,1*,1*,1.5*,90,90">
-                                            <TextBlock Text="{x:Bind Number}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="1" Text="{x:Bind DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Grid.Column="2" Text="{x:Bind Upstream}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Grid.Column="3" Text="{x:Bind TypeLabel}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Grid.Column="4" Text="{x:Bind BaseUrl}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Grid.Column="5" Text="{x:Bind ContextText}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="6" Text="{x:Bind OutputText}" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Number}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding Upstream}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding TypeLabel}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="4" Text="{Binding BaseUrl}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="5" Text="{Binding ContextText}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="6" Text="{Binding OutputText}" VerticalAlignment="Center"/>
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
@@ -153,16 +153,16 @@
                     </StackPanel>
                     <ListView x:Name="RestoresList" Grid.Row="1" SelectionMode="Single">
                         <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:RestorePoint">
+                            <DataTemplate>
                                 <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8" Padding="16">
                                     <Grid ColumnDefinitions="*,Auto">
                                         <StackPanel Spacing="4">
-                                            <StackPanel Orientation="Horizontal" Spacing="9"><TextBlock Text="{x:Bind Name}" FontWeight="SemiBold"/><TextBlock Text="{x:Bind KindLabel}" Style="{StaticResource SecondaryTextStyle}"/></StackPanel>
-                                            <TextBlock Text="{x:Bind Notes}" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="9"><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding KindLabel}" Style="{StaticResource SecondaryTextStyle}"/></StackPanel>
+                                            <TextBlock Text="{Binding Notes}" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                            <TextBlock Text="{x:Bind CreatedAt}"/>
-                                            <TextBlock Text="{x:Bind Items}" HorizontalAlignment="Right" Style="{StaticResource SecondaryTextStyle}"/>
+                                            <TextBlock Text="{Binding CreatedAt}"/>
+                                            <TextBlock Text="{Binding Items}" HorizontalAlignment="Right" Style="{StaticResource SecondaryTextStyle}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>

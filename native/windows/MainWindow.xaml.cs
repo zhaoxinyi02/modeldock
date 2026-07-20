@@ -20,7 +20,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+        SystemBackdrop = new MicaBackdrop();
         ConfigureWindow();
         Activated += async (_, _) =>
         {
